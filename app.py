@@ -240,6 +240,25 @@ def _allowed_emails() -> set:
     return {str(e).strip().lower() for e in raw if str(e).strip()}
 
 
+DEV_EMAILS_DEFAULT = {"maysam.abukashabeh@namaame.com"}
+
+
+def _is_developer() -> bool:
+    """Developer-only controls (e.g. the Refresh button). Override list via
+    DEVELOPER_EMAILS in secrets. With no allowlist configured (local run) everyone
+    on the machine is the developer."""
+    try:
+        raw = st.secrets.get("DEVELOPER_EMAILS", [])
+    except Exception:
+        raw = []
+    if isinstance(raw, str):
+        raw = raw.replace(";", ",").split(",")
+    devs = {str(e).strip().lower() for e in raw if str(e).strip()} or DEV_EMAILS_DEFAULT
+    if not _allowed_emails():
+        return True
+    return (st.session_state.get("me_user_email") or "").strip().lower() in devs
+
+
 def _access_gate():
     allowed = _allowed_emails()
     if not allowed:
@@ -416,7 +435,174 @@ SCORECARD_REGIONS = ["Middle East", "UAE", "Saudi Arabia", "Kuwait"]
 SCORECARD_REGION_DISPLAY = {"Saudi Arabia": "KSA"}
 
 
-def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix):
+def _scorecard_cell_values(df, metrics_spec, win):
+    """Prep the (values, mom, state) grid used by both the HTML render and the PPTX export.
+    Returns (grid, df_maybe_augmented) where grid is a list of {label, kind, regions=[...]}
+    or {spacer: True} entries."""
+    if any(m[1] == "cr_net_adds" for m in metrics_spec if m[1]) \
+            and "cr_net_adds" not in df.columns \
+            and {"cr_cws", "cr_churns"} <= set(df.columns):
+        df = df.copy()
+        df["cr_net_adds"] = df["cr_cws"] - df["cr_churns"]
+    grid = []
+    for label, col, kind, up_good in metrics_spec:
+        if label is None:
+            grid.append({"spacer": True})
+            continue
+        row = {"label": label, "kind": kind, "regions": []}
+        for region in SCORECARD_REGIONS:
+            r = df[(df["country"] == region) & (df["month_end"].isin(win))]
+            vals = []
+            for m in win:
+                rr = r[r["month_end"] == m]
+                v = rr[col].iloc[0] if (col in r.columns and not rr.empty) else None
+                try:
+                    v = None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
+                except Exception:
+                    v = None
+                vals.append(v)
+            mom = (vals[-1] - vals[-2]) if (vals[-1] is not None and vals[-2] is not None) else None
+            if mom is None:
+                state = "na"
+            elif abs(mom) < 1e-12:
+                state = "flat"
+            else:
+                good = (mom > 0) if up_good else (mom < 0)
+                state = "up" if good else "dn"
+            row["regions"].append({"vals": vals, "mom": mom, "state": state})
+        grid.append(row)
+    return grid, df
+
+
+def _pptx_style_cell(cell, *, bold=False, size=10, align="left", color=(0x21, 0x36, 0x2B), fill=None):
+    """Apply font + alignment + fill to a python-pptx table cell. All three color styles
+    (bold, size, color, alignment) must be applied AFTER the cell.text assignment because
+    setting .text discards any previous run styling."""
+    from pptx.util import Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN
+    tf = cell.text_frame
+    tf.margin_left = tf.margin_right = 0
+    tf.margin_top = tf.margin_bottom = 0
+    align_map = {"left": PP_ALIGN.LEFT, "right": PP_ALIGN.RIGHT, "center": PP_ALIGN.CENTER}
+    for p in tf.paragraphs:
+        p.alignment = align_map.get(align, PP_ALIGN.LEFT)
+        for r in p.runs:
+            r.font.bold = bool(bold)
+            r.font.size = Pt(size)
+            r.font.color.rgb = RGBColor(*color)
+    if fill is not None:
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(*fill)
+
+
+def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
+    """Native-PowerPoint slide with a wide table matching the on-screen scorecard.
+    Editable in PowerPoint (not an image). Widescreen 16:9 layout."""
+    from io import BytesIO
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    # Slide title
+    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(12.5), Inches(0.55))
+    tf = tb.text_frame
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    p = tf.paragraphs[0]
+    r = p.add_run()
+    r.text = f"{title}  —  {sel_label}"
+    r.font.size = Pt(22)
+    r.font.bold = True
+    r.font.color.rgb = RGBColor(0x21, 0x36, 0x2B)
+
+    n_regions = len(SCORECARD_REGIONS)
+    n_cols = 1 + n_regions * 4
+    body_rows = [g for g in grid if not g.get("spacer")]
+    n_rows = 2 + len(body_rows)
+    left, top = Inches(0.35), Inches(1.0)
+    width = Inches(12.7)
+    height = Inches(0.55) + Inches(0.34) * len(body_rows)
+
+    tbl_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
+    tbl = tbl_shape.table
+
+    label_w = Inches(1.7)
+    remaining_in = 12.7 - 1.7
+    per_region_in = remaining_in / n_regions
+    month_in = per_region_in * 0.28
+    mom_in = per_region_in - month_in * 3
+    tbl.columns[0].width = label_w
+    ci = 1
+    for _ in SCORECARD_REGIONS:
+        for _ in range(3):
+            tbl.columns[ci].width = Inches(month_in)
+            ci += 1
+        tbl.columns[ci].width = Inches(mom_in)
+        ci += 1
+
+    # Row 0: region banner (merged across the 4 cols per region)
+    tbl.cell(0, 0).text = ""
+    _pptx_style_cell(tbl.cell(0, 0), size=10)
+    for r_i, region in enumerate(SCORECARD_REGIONS):
+        c0 = 1 + r_i * 4
+        c1 = c0 + 3
+        tbl.cell(0, c0).merge(tbl.cell(0, c1))
+        tbl.cell(0, c0).text = SCORECARD_REGION_DISPLAY.get(region, region)
+        _pptx_style_cell(tbl.cell(0, c0), bold=True, size=13, align="center",
+                         color=(0x21, 0x36, 0x2B))
+
+    # Row 1: month subheaders + MoM Δ, dark green banner
+    tbl.cell(1, 0).text = ""
+    _pptx_style_cell(tbl.cell(1, 0), size=9)
+    ci = 1
+    for _ in SCORECARD_REGIONS:
+        for h in win_hdrs:
+            tbl.cell(1, ci).text = h
+            _pptx_style_cell(tbl.cell(1, ci), bold=True, size=10, align="center",
+                             fill=(0x21, 0x36, 0x2B), color=(0xFF, 0xFF, 0xFF))
+            ci += 1
+        tbl.cell(1, ci).text = "MoM Δ"
+        _pptx_style_cell(tbl.cell(1, ci), bold=True, size=10, align="center",
+                         fill=(0x21, 0x36, 0x2B), color=(0xFF, 0xFF, 0xFF))
+        ci += 1
+
+    up_rgb = (0x16, 0xA3, 0x4A)
+    dn_rgb = (0xB4, 0x47, 0x2E)
+    flat_rgb = (0x64, 0x74, 0x8B)
+    row_idx = 2
+    for g in grid:
+        if g.get("spacer"):
+            continue
+        tbl.cell(row_idx, 0).text = g["label"]
+        _pptx_style_cell(tbl.cell(row_idx, 0), bold=True, size=10, align="left",
+                         color=(0x21, 0x36, 0x2B))
+        ci = 1
+        for reg in g["regions"]:
+            for v in reg["vals"]:
+                tbl.cell(row_idx, ci).text = fmt(v, g["kind"]) if v is not None else "—"
+                _pptx_style_cell(tbl.cell(row_idx, ci), size=10, align="right",
+                                 color=(0x21, 0x36, 0x2B))
+                ci += 1
+            state = reg["state"]
+            mom_txt = "—" if reg["mom"] is None else fmt(reg["mom"], g["kind"])
+            tbl.cell(row_idx, ci).text = mom_txt
+            mom_color = up_rgb if state == "up" else dn_rgb if state == "dn" else flat_rgb
+            _pptx_style_cell(tbl.cell(row_idx, ci), bold=True, size=10, align="right",
+                             color=mom_color)
+            ci += 1
+        row_idx += 1
+
+    buf = BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix, *, pptx_title=None):
     """Reproduce the Google Sheet All Hands scorecard layout: 4 region blocks side-by-side,
     each with the last 3 months (as-of picker) + a MoM Δ column, one row per metric.
     Negative MoM in red / positive in green (unless up_is_good=False, then flipped)."""
@@ -424,22 +610,17 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix):
         st.info("No panel data available.")
         return
 
-    # Add calculated cr_net_adds if the two ingredients are there.
-    if any(m[1] == "cr_net_adds" for m in metrics_spec if m[1]) \
-            and "cr_net_adds" not in df.columns \
-            and {"cr_cws", "cr_churns"} <= set(df.columns):
-        df = df.copy()
-        df["cr_net_adds"] = df["cr_cws"] - df["cr_churns"]
-
-    # As-of month picker (newest first).
+    # As-of month picker (newest first) + PPTX download side-by-side.
     month_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
     labels_desc = list(reversed(month_labels))
-    sel_label = st.selectbox(
-        "As-of month",
-        options=labels_desc,
-        index=0,
-        key=f"{key_prefix}_scorecard_asof",
-    )
+    picker_col, dl_col = st.columns([3, 1], vertical_alignment="bottom")
+    with picker_col:
+        sel_label = st.selectbox(
+            "As-of month",
+            options=labels_desc,
+            index=0,
+            key=f"{key_prefix}_scorecard_asof",
+        )
     sel_idx = month_labels.index(sel_label)
     if sel_idx < 2:
         st.warning("Need at least 3 months of history to build the scorecard. "
@@ -448,9 +629,32 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix):
     win = all_months[sel_idx - 2: sel_idx + 1]  # oldest, mid, newest (as-of)
     win_hdrs = [pd.Timestamp(m).strftime("%b %y") for m in win]
 
-    # Build one HTML table so we can lay out 4 region blocks side-by-side.
+    # Build the grid once - drives both the HTML render and the PPTX export.
+    grid, df = _scorecard_cell_values(df, metrics_spec, win)
+
+    # Download-as-PowerPoint button.
+    with dl_col:
+        title_for_pptx = pptx_title or "All Hands"
+        try:
+            pptx_bytes = _build_scorecard_pptx(title_for_pptx, sel_label, win_hdrs, grid)
+        except Exception as e:
+            pptx_bytes = None
+            st.caption(f"PPTX export unavailable: {type(e).__name__}")
+        if pptx_bytes:
+            fname_safe = title_for_pptx.replace(" ", "_")
+            month_slug = sel_label.replace(" ", "_")
+            st.download_button(
+                "Download as slide",
+                data=pptx_bytes,
+                file_name=f"{fname_safe}_{month_slug}.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                key=f"{key_prefix}_scorecard_pptx",
+                use_container_width=True,
+            )
+
+    # Build the HTML table for the on-screen render.
     n_regions = len(SCORECARD_REGIONS)
-    total_cols = 1 + n_regions * 4  # metric label + (3 months + MoM) per region
+    total_cols = 1 + n_regions * 4
     html = [
         "<div class='scorecard-wrap'>",
         f"<div class='scorecard-title'>{sel_label}</div>",
@@ -462,14 +666,12 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix):
         html += ["<col/>", "<col/>", "<col/>", "<col class='c-delta'/>"]
     html.append("</colgroup>")
 
-    # Region banner row.
     html.append("<thead>")
     html.append("<tr>")
     html.append("<th class='sc-empty'></th>")
     for r in SCORECARD_REGIONS:
         html.append(f"<th class='sc-region' colspan='4'>{SCORECARD_REGION_DISPLAY.get(r, r)}</th>")
     html.append("</tr>")
-    # Month subheader.
     html.append("<tr>")
     html.append("<th class='sc-empty'></th>")
     for _ in SCORECARD_REGIONS:
@@ -479,37 +681,19 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix):
     html.append("</tr>")
     html.append("</thead><tbody>")
 
-    for label, col, kind, up_good in metrics_spec:
-        if label is None:
+    state_to_cls = {"up": "sc-delta-up", "dn": "sc-delta-dn",
+                    "flat": "sc-delta-flat", "na": "sc-delta-na"}
+    for g in grid:
+        if g.get("spacer"):
             html.append(f"<tr class='sc-spacer'><td colspan='{total_cols}'>&nbsp;</td></tr>")
             continue
         html.append("<tr>")
-        html.append(f"<td class='sc-metric'>{label}</td>")
-        for region in SCORECARD_REGIONS:
-            row = df[(df["country"] == region) & (df["month_end"].isin(win))]
-            vals = []
-            for m in win:
-                r = row[row["month_end"] == m]
-                v = r[col].iloc[0] if (col in row.columns and not r.empty) else None
-                try:
-                    v = None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
-                except Exception:
-                    v = None
-                vals.append(v)
-            for v in vals:
-                html.append(f"<td class='sc-val'>{fmt(v, kind) if v is not None else '—'}</td>")
-            mom = (vals[-1] - vals[-2]) if (vals[-1] is not None and vals[-2] is not None) else None
-            if mom is None:
-                mom_cls = "sc-delta-na"
-                mom_txt = "—"
-            else:
-                if abs(mom) < 1e-12:
-                    mom_cls, mom_txt = "sc-delta-flat", fmt(mom, kind)
-                else:
-                    good = (mom > 0) if up_good else (mom < 0)
-                    mom_cls = "sc-delta-up" if good else "sc-delta-dn"
-                    mom_txt = fmt(mom, kind)
-            html.append(f"<td class='sc-delta {mom_cls}'>{mom_txt}</td>")
+        html.append(f"<td class='sc-metric'>{g['label']}</td>")
+        for reg in g["regions"]:
+            for v in reg["vals"]:
+                html.append(f"<td class='sc-val'>{fmt(v, g['kind']) if v is not None else '—'}</td>")
+            mom_txt = "—" if reg["mom"] is None else fmt(reg["mom"], g["kind"])
+            html.append(f"<td class='sc-delta {state_to_cls[reg['state']]}'>{mom_txt}</td>")
         html.append("</tr>")
 
     html.append("</tbody></table></div>")
@@ -939,9 +1123,11 @@ def main():
     with tab_overview:
         _render_panel_overview(df, all_months, all_labels, cur_month_start)
     with tab_ck:
-        _render_all_hands_scorecard(df, all_months, CK_SCORECARD_METRICS, "ck")
+        _render_all_hands_scorecard(df, all_months, CK_SCORECARD_METRICS, "ck",
+                                    pptx_title="ME All Hands - Cloud Kitchens")
     with tab_cr:
-        _render_all_hands_scorecard(df, all_months, CR_SCORECARD_METRICS, "cr")
+        _render_all_hands_scorecard(df, all_months, CR_SCORECARD_METRICS, "cr",
+                                    pptx_title="ME All Hands - Cloud Retail")
 
 
 main()
