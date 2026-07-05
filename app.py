@@ -37,7 +37,8 @@ st.markdown(
     <style>
     .stApp { background: #F2F5F9; }
     #MainMenu, footer { visibility: hidden; }
-    .block-container { padding-top: 1.1rem; max-width: 1550px; }
+    .block-container { padding-top: 1.1rem; max-width: 100% !important;
+                       padding-left: 1.6rem !important; padding-right: 1.6rem !important; }
     .hdr { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
     .hdr .t { font-size: 1.5rem; font-weight: 800; color: #1F3B57; letter-spacing: -0.02em; }
     .hdr .badge { background: #E1EAF2; color: #1F3B57; font-size: 0.75rem; font-weight: 700;
