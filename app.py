@@ -7,6 +7,7 @@ Sections: KPI gauges + cards / Revenue / Sales / Mix / Countries (animated map).
 Credentials: [gcp_service_account] in .streamlit/secrets.toml, else ADC.
 """
 import math
+import os
 from decimal import Decimal
 
 import pandas as pd
@@ -17,9 +18,10 @@ BRIDGE_TABLE = "css-operations.me_panel_dev_us.me_sales_panel_k_monthly"
 COUNTRIES = ["Middle East", "Saudi Arabia", "UAE", "Kuwait", "Bahrain", "Qatar"]
 START_MONTH = "2025-01-31"
 
-# Palette (from the reference dashboard): navy / teal / red / orange / yellow
+# KitchenPark brand palette: KP teal leads; navy / red / orange / yellow as accents
 NAVY = "#1F3B57"
-TEAL = "#17A2A6"
+TEAL = "#0F766E"          # KitchenPark primary teal
+KP_SOFT = "#5E8D8A"       # the logo's soft teal - used for chrome accents
 RED = "#E74C3C"
 ORANGE = "#F39C12"
 YELLOW = "#F5C542"
@@ -29,7 +31,10 @@ LIGHT = "#E8EEF4"
 SERIES_COLORS = [NAVY, TEAL, RED, ORANGE, YELLOW, SLATE]
 COUNTRY_COLORS = {"Saudi Arabia": NAVY, "UAE": TEAL, "Kuwait": ORANGE, "Bahrain": RED, "Qatar": YELLOW}
 
-st.set_page_config(page_title="ME Sales Panel", layout="wide", page_icon=":bar_chart:",
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "kitchenpark_logo.png")
+_page_icon = LOGO_PATH if os.path.exists(LOGO_PATH) else ":bar_chart:"
+
+st.set_page_config(page_title="ME Sales Panel | KitchenPark", layout="wide", page_icon=_page_icon,
                    initial_sidebar_state="collapsed")
 
 st.markdown(
@@ -58,7 +63,10 @@ st.markdown(
     .g-dlt { text-align: center; font-size: 0.74rem; margin: 0; }
     .sec { font-size: 1rem; font-weight: 800; color: #1F3B57; text-transform: uppercase;
            letter-spacing: 0.06em; margin: 22px 0 4px 0;
-           border-left: 5px solid #17A2A6; padding-left: 10px; }
+           border-left: 5px double #0F766E; padding-left: 10px; }
+    .brand-foot { display: flex; align-items: center; gap: 10px; margin-top: 18px;
+                  padding-top: 12px; border-top: 1px solid #E3E9F0; color: #5E8D8A;
+                  font-size: 0.8rem; font-weight: 600; }
     section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
     .stDataFrame thead th { background: #EDF2F7 !important; font-weight: 600 !important; }
     </style>
@@ -352,7 +360,10 @@ def main():
         return v or default
 
     with st.container(border=True):
-        r1a, r1b = st.columns([5.2, 0.8], vertical_alignment="bottom")
+        r1logo, r1a, r1b = st.columns([0.45, 4.75, 0.8], vertical_alignment="center")
+        with r1logo:
+            if os.path.exists(LOGO_PATH):
+                st.image(LOGO_PATH, width=58)
         with r1a:
             sel_disp = _picker("Market", list(disp.values()), disp[countries[0]], "flt_cty")
             sel_country = rev.get(sel_disp, countries[0])
@@ -657,8 +668,15 @@ def main():
         else:
             st.caption("Country-mix stack is shown for additive metrics (counts and $), not rates.")
 
-    st.caption("Source: `" + BRIDGE_TABLE + "` - same bridge the Google Sheets panel reads; "
-               "rebuilt every 12h. Current partial month is dotted/grey and excluded from KPIs.")
+    # ---- branded footer ----
+    fcol1, fcol2 = st.columns([0.25, 9.75], vertical_alignment="center")
+    with fcol1:
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, width=34)
+    with fcol2:
+        st.caption("**KitchenPark - ME RevOps** | Source: `" + BRIDGE_TABLE + "` - same bridge the "
+                   "Google Sheets panel reads; rebuilt every 12h. Current partial month is "
+                   "dotted/grey and excluded from KPIs.")
 
 
 main()
