@@ -412,6 +412,7 @@ CK_SCORECARD_METRICS = [
     (None, None, None, None),
     ("All AE Prod.",      "sales_team_cw_productivity",   "num1", True),
     (None, None, None, None),
+    ("Owned sites",       "all_facilities",               "num",  True),
     ("Live kitchens",     "total_kitchens",               "num",  True),
     (None, None, None, None),
     ("Live Sold",         "live_sold_rate",               "pct",  True),
@@ -445,11 +446,18 @@ def _scorecard_cell_values(df, metrics_spec, win):
         df = df.copy()
         df["cr_net_adds"] = df["cr_cws"] - df["cr_churns"]
     grid = []
-    for label, col, kind, up_good in metrics_spec:
+    for i, (label, col, kind, up_good) in enumerate(metrics_spec):
         if label is None:
             grid.append({"spacer": True})
             continue
-        row = {"label": label, "kind": kind, "regions": []}
+        # A row "closes a group" when the very next entry is a spacer OR it is the last row.
+        # Used to draw the horizontal underline between metric groups, matching the sheet.
+        next_i = i + 1
+        is_group_end = (
+            next_i >= len(metrics_spec)
+            or metrics_spec[next_i][0] is None
+        )
+        row = {"label": label, "kind": kind, "regions": [], "group_end": is_group_end}
         for region in SCORECARD_REGIONS:
             r = df[(df["country"] == region) & (df["month_end"].isin(win))]
             vals = []
@@ -494,6 +502,28 @@ def _pptx_style_cell(cell, *, bold=False, size=10, align="left", color=(0x21, 0x
     if fill is not None:
         cell.fill.solid()
         cell.fill.fore_color.rgb = RGBColor(*fill)
+
+
+def _pptx_cell_bottom_border(cell, *, color_hex="B7B0A0", width_emu=6350):
+    """Add a bottom border to a python-pptx table cell. python-pptx has no first-class
+    cell-border API, so we build the OOXML fragment (a:lnB) directly on the cell's tcPr."""
+    from lxml import etree
+    ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    tc = cell._tc
+    tcPr = tc.find(f"{{{ns_a}}}tcPr")
+    if tcPr is None:
+        tcPr = etree.SubElement(tc, f"{{{ns_a}}}tcPr")
+    # Remove any prior bottom border so we do not stack styles.
+    for old in tcPr.findall(f"{{{ns_a}}}lnB"):
+        tcPr.remove(old)
+    lnB = etree.SubElement(tcPr, f"{{{ns_a}}}lnB")
+    lnB.set("w", str(width_emu))
+    lnB.set("cap", "flat")
+    lnB.set("cmpd", "sng")
+    lnB.set("algn", "ctr")
+    solid = etree.SubElement(lnB, f"{{{ns_a}}}solidFill")
+    srgb = etree.SubElement(solid, f"{{{ns_a}}}srgbClr")
+    srgb.set("val", color_hex)
 
 
 def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
@@ -587,6 +617,11 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
                 tbl.cell(row_idx, ci).text = fmt(v, g["kind"]) if v is not None else "—"
                 _pptx_style_cell(tbl.cell(row_idx, ci), size=10, align="right",
                                  color=(0x21, 0x36, 0x2B))
+                if g.get("group_end"):
+                    try:
+                        _pptx_cell_bottom_border(tbl.cell(row_idx, ci))
+                    except Exception:
+                        pass
                 ci += 1
             state = reg["state"]
             mom_txt = "—" if reg["mom"] is None else fmt(reg["mom"], g["kind"])
@@ -594,6 +629,11 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
             mom_color = up_rgb if state == "up" else dn_rgb if state == "dn" else flat_rgb
             _pptx_style_cell(tbl.cell(row_idx, ci), bold=True, size=10, align="right",
                              color=mom_color)
+            if g.get("group_end"):
+                try:
+                    _pptx_cell_bottom_border(tbl.cell(row_idx, ci))
+                except Exception:
+                    pass
             ci += 1
         row_idx += 1
 
@@ -687,7 +727,8 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix, *, ppt
         if g.get("spacer"):
             html.append(f"<tr class='sc-spacer'><td colspan='{total_cols}'>&nbsp;</td></tr>")
             continue
-        html.append("<tr>")
+        row_cls = "sc-group-end" if g.get("group_end") else ""
+        html.append(f"<tr class='{row_cls}'>")
         html.append(f"<td class='sc-metric'>{g['label']}</td>")
         for reg in g["regions"]:
             for v in reg["vals"]:
@@ -720,7 +761,14 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix, *, ppt
         table.scorecard .sc-delta-dn { color: #E74C3C; }
         table.scorecard .sc-delta-flat { color: #64748B; }
         table.scorecard .sc-delta-na { color: #94A3B8; }
-        table.scorecard tr.sc-spacer td { padding: 4px 0; background: transparent; }
+        /* Group-end rows get a thin bottom border under the value + MoM cells (like the sheet).
+           The label cell is intentionally left borderless to keep the visual grouping clean. */
+        table.scorecard tr.sc-group-end td.sc-val,
+        table.scorecard tr.sc-group-end td.sc-delta {
+            border-bottom: 1px solid #B7B0A0;
+            padding-bottom: 8px;
+        }
+        table.scorecard tr.sc-spacer td { padding: 0; height: 10px; background: transparent; }
         </style>
         """ + "".join(html),
         unsafe_allow_html=True,
