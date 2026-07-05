@@ -929,6 +929,7 @@ def main():
             '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
             unsafe_allow_html=True,
         )
+    _inject_motif()
 
     tab_overview, tab_ck, tab_cr = st.tabs([
         "Panel Overview",
