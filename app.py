@@ -53,8 +53,9 @@ st.markdown(
     <style>
     .stApp { background: #EEEDE5; }
     #MainMenu, footer { visibility: hidden; }
-    .block-container { padding-top: 1.1rem; max-width: 100% !important;
+    .block-container { padding-top: 3.4rem !important; max-width: 100% !important;
                        padding-left: 1.6rem !important; padding-right: 1.6rem !important; }
+    header[data-testid="stHeader"] { background: transparent !important; }
     /* NAMAA brand banner */
     .nm-banner { display: flex; align-items: center; gap: 16px; background: #21362B;
                  border-radius: 14px; padding: 10px 18px; margin: 4px 0 12px 0;
