@@ -530,9 +530,92 @@ def _pptx_cell_bottom_border(cell, *, color_hex="B7B0A0", width_emu=6350):
     srgb.set("val", color_hex)
 
 
+def _brand_slide(slide, prs, *, slide_number=None):
+    """Paint the NAMAA deck chrome on a blank slide: cream background, NAMAA logo
+    top-left, terracotta motif bottom-right, confidential footer bottom-left,
+    slide number bottom-right. Matches the reference deck template."""
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+
+    slide_w = prs.slide_width
+    slide_h = prs.slide_height
+
+    # Background: NAMAA cream. python-pptx exposes slide.background.fill,
+    # so no XML mangling is needed for this.
+    try:
+        bg = slide.background
+        bg.fill.solid()
+        bg.fill.fore_color.rgb = RGBColor(0xEE, 0xED, 0xE5)
+    except Exception:
+        # Some template variants block programmatic background changes; fall back to
+        # a full-slide cream rectangle behind everything else.
+        rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, slide_w, slide_h)
+        rect.fill.solid()
+        rect.fill.fore_color.rgb = RGBColor(0xEE, 0xED, 0xE5)
+        rect.line.fill.background()
+        # Send behind everything else (best-effort).
+        try:
+            spTree = rect._element.getparent()
+            spTree.remove(rect._element)
+            spTree.insert(2, rect._element)
+        except Exception:
+            pass
+
+    # NAMAA logo top-left. Height is roughly the header band; width auto-scales.
+    if os.path.exists(LOGO_PATH):
+        try:
+            slide.shapes.add_picture(
+                LOGO_PATH,
+                left=Inches(0.45),
+                top=Inches(0.35),
+                height=Inches(0.55),
+            )
+        except Exception:
+            pass
+
+    # Terracotta motif bottom-right - subtle brand accent from the reference deck.
+    if os.path.exists(MOTIF_PATH):
+        try:
+            motif_w = Inches(4.6)
+            slide.shapes.add_picture(
+                MOTIF_PATH,
+                left=slide_w - motif_w + Inches(0.25),
+                top=slide_h - Inches(3.4),
+                width=motif_w,
+            )
+        except Exception:
+            pass
+
+    # Bottom-left: confidential footer, small dark green text.
+    footer_h = Inches(0.35)
+    tb = slide.shapes.add_textbox(Inches(0.45), slide_h - footer_h - Inches(0.15),
+                                  Inches(8), footer_h)
+    tf = tb.text_frame
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    p = tf.paragraphs[0]
+    r = p.add_run()
+    r.text = "INFORMATION IN THIS DOCUMENT IS PRIVATE AND CONFIDENTIAL"
+    r.font.size = Pt(9)
+    r.font.bold = False
+    r.font.color.rgb = RGBColor(0x21, 0x36, 0x2B)
+
+    # Bottom-right: slide number (or blank if unset).
+    if slide_number is not None:
+        tb = slide.shapes.add_textbox(slide_w - Inches(0.85), slide_h - footer_h - Inches(0.15),
+                                      Inches(0.5), footer_h)
+        tf = tb.text_frame
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]
+        r = p.add_run()
+        r.text = str(slide_number)
+        r.font.size = Pt(9)
+        r.font.color.rgb = RGBColor(0x21, 0x36, 0x2B)
+
+
 def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
     """Native-PowerPoint slide with a wide table matching the on-screen scorecard.
-    Editable in PowerPoint (not an image). Widescreen 16:9 layout."""
+    Editable in PowerPoint (not an image). Widescreen 16:9 layout with NAMAA brand chrome."""
     from io import BytesIO
     from pptx import Presentation
     from pptx.util import Inches, Pt
@@ -543,14 +626,17 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
     prs.slide_height = Inches(7.5)
     slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
 
-    # Slide title
-    tb = slide.shapes.add_textbox(Inches(0.4), Inches(0.25), Inches(12.5), Inches(0.55))
+    # Paint NAMAA background + logo + motif + footer FIRST so the table renders on top.
+    _brand_slide(slide, prs, slide_number=11)
+
+    # Slide title (dark green, right of the logo).
+    tb = slide.shapes.add_textbox(Inches(2.0), Inches(0.4), Inches(11.0), Inches(0.55))
     tf = tb.text_frame
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
     p = tf.paragraphs[0]
     r = p.add_run()
     r.text = f"{title}  —  {sel_label}"
-    r.font.size = Pt(22)
+    r.font.size = Pt(20)
     r.font.bold = True
     r.font.color.rgb = RGBColor(0x21, 0x36, 0x2B)
 
@@ -558,9 +644,9 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
     n_cols = 1 + n_regions * 4
     body_rows = [g for g in grid if not g.get("spacer")]
     n_rows = 2 + len(body_rows)
-    left, top = Inches(0.35), Inches(1.0)
+    left, top = Inches(0.35), Inches(1.15)
     width = Inches(12.7)
-    height = Inches(0.55) + Inches(0.34) * len(body_rows)
+    height = Inches(0.55) + Inches(0.32) * len(body_rows)
 
     tbl_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
     tbl = tbl_shape.table
