@@ -370,7 +370,8 @@ def spark(series, color=TEAL, height=52):
     return fig
 
 
-def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=True):
+def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=True,
+             delta_label="vs prior"):
     with col:
         with st.container(border=True):
             st.markdown(f'<p class="kpi-l">{label}</p>', unsafe_allow_html=True)
@@ -381,7 +382,7 @@ def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=Tru
                 good = (delta_val >= 0) if up_is_good else (delta_val <= 0)
                 cls = "kpi-d-up" if good else "kpi-d-dn"
                 arrow = "&#9650;" if delta_val >= 0 else "&#9660;"
-                st.markdown(f'<span class="{cls}">{arrow} {delta_str} vs prior</span>',
+                st.markdown(f'<span class="{cls}">{arrow} {delta_str} {delta_label}</span>',
                             unsafe_allow_html=True)
             if series is not None and len(series) > 1:
                 st.plotly_chart(spark(series), use_container_width=True,
@@ -945,20 +946,33 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
     closed_mask = d["month_end"] < cur_month_start
     closed_idx = int(closed_mask[closed_mask].index.max()) if closed_mask.any() else len(d) - 1
     kpi_row = d.iloc[closed_idx]
-    kpi_prev = d.iloc[closed_idx - 1] if closed_idx > 0 else None
+    # Delta base = the FIRST closed month in the selected window, so KPI deltas answer
+    # "how did we move over the selected period" and visibly react to the timeline.
+    # With a single closed month in view, fall back to plain month-over-month.
+    _first_closed = int(closed_mask[closed_mask].index.min()) if closed_mask.any() else 0
+    if _first_closed < closed_idx:
+        base_row = d.iloc[_first_closed]
+        delta_label = "vs " + str(base_row["month_label"])
+    elif closed_idx > 0:
+        base_row = d.iloc[closed_idx - 1]
+        delta_label = "vs " + str(base_row["month_label"])
+    else:
+        base_row = None
+        delta_label = "vs prior"
 
     st.markdown(
         '<div class="hdr">'
         f'<span class="badge">{sel_country}</span>'
-        f'<span class="badge">KPIs as of {kpi_row["month_label"]} (last closed month)</span></div>',
+        f'<span class="badge">{x[0]} - {x[-1]} &middot; {len(d)} months</span>'
+        f'<span class="badge">KPIs as of {kpi_row["month_label"]} &middot; deltas {delta_label}</span></div>',
         unsafe_allow_html=True,
     )
 
     def kd(col_name):
         try:
-            if kpi_prev is None or col_name not in d.columns:
+            if base_row is None or col_name not in d.columns:
                 return None
-            return float(kpi_row[col_name]) - float(kpi_prev[col_name])
+            return float(kpi_row[col_name]) - float(base_row[col_name])
         except Exception:
             return None
 
@@ -974,8 +988,8 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
         try:
             g, n = float(kpi_row["gross_rr_usd"]), float(kpi_row["rr_after_mko_mfo_usd"])
             conc_now = (g - n) / g if g else None
-            if kpi_prev is not None:
-                gp, np_ = float(kpi_prev["gross_rr_usd"]), float(kpi_prev["rr_after_mko_mfo_usd"])
+            if base_row is not None:
+                gp, np_ = float(base_row["gross_rr_usd"]), float(base_row["rr_after_mko_mfo_usd"])
                 conc_prev = (gp - np_) / gp if gp else None
         except Exception:
             pass
@@ -1019,7 +1033,8 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             continue
         dv = kd(col_name)
         dstr = fmt(abs(dv) if dv is not None else None, kind)
-        kpi_card(slot, label, fmt(kpi_row.get(col_name), kind), dv, dstr, kseries(col_name), up_good)
+        kpi_card(slot, label, fmt(kpi_row.get(col_name), kind), dv, dstr, kseries(col_name), up_good,
+                 delta_label=delta_label)
 
     go = _go()
 
