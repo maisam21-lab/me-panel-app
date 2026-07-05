@@ -6,6 +6,7 @@ Sections: KPI gauges + cards / Revenue / Sales / Mix / Countries (animated map).
 
 Credentials: [gcp_service_account] in .streamlit/secrets.toml, else ADC.
 """
+import base64
 import math
 import os
 from decimal import Decimal
@@ -18,57 +19,72 @@ BRIDGE_TABLE = "css-operations.me_panel_dev_us.me_sales_panel_k_monthly"
 COUNTRIES = ["Middle East", "Saudi Arabia", "UAE", "Kuwait", "Bahrain", "Qatar"]
 START_MONTH = "2025-01-31"
 
-# KitchenPark brand palette: KP teal leads; navy / red / orange / yellow as accents
-NAVY = "#1F3B57"
-TEAL = "#0F766E"          # KitchenPark primary teal
-KP_SOFT = "#5E8D8A"       # the logo's soft teal - used for chrome accents
-RED = "#E74C3C"
-ORANGE = "#F39C12"
-YELLOW = "#F5C542"
-SLATE = "#94A3B8"
-LIGHT = "#E8EEF4"
+# NAMAA brand palette: deep forest green + cream + terracotta (from the brand banner),
+# with sage / gold / taupe as supporting series colors. Variable names kept generic so the
+# chart code reads unchanged - only the values are branded.
+NAVY = "#21362B"          # NAMAA deep green (primary dark)
+TEAL = "#5F8575"          # sage green (secondary)
+RED = "#B4472E"           # rust - losses/churn
+ORANGE = "#D97757"        # terracotta - the brand accent
+YELLOW = "#C2A14D"        # sand/gold
+SLATE = "#A79E8B"         # taupe
+LIGHT = "#EAE7DC"         # warm light (gauge remainder)
 
-SERIES_COLORS = [NAVY, TEAL, RED, ORANGE, YELLOW, SLATE]
-COUNTRY_COLORS = {"Saudi Arabia": NAVY, "UAE": TEAL, "Kuwait": ORANGE, "Bahrain": RED, "Qatar": YELLOW}
+SERIES_COLORS = [NAVY, ORANGE, YELLOW, TEAL, RED, SLATE]
+COUNTRY_COLORS = {"Saudi Arabia": NAVY, "UAE": ORANGE, "Kuwait": YELLOW, "Bahrain": RED, "Qatar": TEAL}
 
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "kitchenpark_logo.png")
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "namaa_logo.jpg")
 _page_icon = LOGO_PATH if os.path.exists(LOGO_PATH) else ":bar_chart:"
 
-st.set_page_config(page_title="ME Sales Panel | KitchenPark", layout="wide", page_icon=_page_icon,
+st.set_page_config(page_title="ME Sales Panel | NAMAA", layout="wide", page_icon=_page_icon,
                    initial_sidebar_state="collapsed")
+
+
+@st.cache_data(show_spinner=False)
+def _logo_b64() -> str:
+    try:
+        with open(LOGO_PATH, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        return ""
 
 st.markdown(
     """
     <style>
-    .stApp { background: #F2F5F9; }
+    .stApp { background: #EEEDE5; }
     #MainMenu, footer { visibility: hidden; }
     .block-container { padding-top: 1.1rem; max-width: 100% !important;
                        padding-left: 1.6rem !important; padding-right: 1.6rem !important; }
+    /* NAMAA brand banner */
+    .nm-banner { display: flex; align-items: center; gap: 16px; background: #21362B;
+                 border-radius: 14px; padding: 10px 18px; margin: 4px 0 12px 0;
+                 box-shadow: 0 2px 8px rgba(33, 54, 43, 0.25); }
+    .nm-banner img { height: 56px; border-radius: 10px; }
+    .nm-name { color: #FFFFFF; font-weight: 800; font-size: 1.1rem; letter-spacing: 0.3em; margin: 0; }
+    .nm-sub { color: #C9D5CC; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.14em;
+              text-transform: uppercase; margin: 0; }
     .hdr { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
-    .hdr .t { font-size: 1.5rem; font-weight: 800; color: #1F3B57; letter-spacing: -0.02em; }
-    .hdr .badge { background: #E1EAF2; color: #1F3B57; font-size: 0.75rem; font-weight: 700;
+    .hdr .t { font-size: 1.5rem; font-weight: 800; color: #21362B; letter-spacing: -0.02em; }
+    .hdr .badge { background: #E2E6DC; color: #21362B; font-size: 0.75rem; font-weight: 700;
                   padding: 3px 10px; border-radius: 999px; }
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        background: #FFFFFF; border: 1px solid #E3E9F0 !important; border-radius: 14px;
-        box-shadow: 0 2px 6px rgba(31, 59, 87, 0.07);
+        background: #FFFFFF; border: 1px solid #E0DCCE !important; border-radius: 14px;
+        box-shadow: 0 2px 6px rgba(33, 54, 43, 0.08);
     }
     .kpi-l { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
-             color: #64748B; margin: 0; }
-    .kpi-v { font-size: 1.5rem; font-weight: 800; color: #1F3B57; margin: 2px 0 0 0; line-height: 1.1; }
-    .kpi-d-up { color: #16A34A; font-size: 0.78rem; font-weight: 700; }
-    .kpi-d-dn { color: #E74C3C; font-size: 0.78rem; font-weight: 700; }
-    .kpi-d-na { color: #94A3B8; font-size: 0.78rem; font-weight: 600; }
+             color: #7C776A; margin: 0; }
+    .kpi-v { font-size: 1.5rem; font-weight: 800; color: #21362B; margin: 2px 0 0 0; line-height: 1.1; }
+    .kpi-d-up { color: #3F7A52; font-size: 0.78rem; font-weight: 700; }
+    .kpi-d-dn { color: #B4472E; font-size: 0.78rem; font-weight: 700; }
+    .kpi-d-na { color: #A79E8B; font-size: 0.78rem; font-weight: 600; }
     .g-lbl { text-align: center; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em;
-             text-transform: uppercase; color: #475569; margin: -6px 0 0 0; }
+             text-transform: uppercase; color: #55604F; margin: -6px 0 0 0; }
     .g-dlt { text-align: center; font-size: 0.74rem; margin: 0; }
-    .sec { font-size: 1rem; font-weight: 800; color: #1F3B57; text-transform: uppercase;
+    .sec { font-size: 1rem; font-weight: 800; color: #21362B; text-transform: uppercase;
            letter-spacing: 0.06em; margin: 22px 0 4px 0;
-           border-left: 5px double #0F766E; padding-left: 10px; }
-    .brand-foot { display: flex; align-items: center; gap: 10px; margin-top: 18px;
-                  padding-top: 12px; border-top: 1px solid #E3E9F0; color: #5E8D8A;
-                  font-size: 0.8rem; font-weight: 600; }
+           border-left: 5px double #D97757; padding-left: 10px; }
     section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
-    .stDataFrame thead th { background: #EDF2F7 !important; font-weight: 600 !important; }
+    .stDataFrame thead th { background: #F0EEE6 !important; font-weight: 600 !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -219,7 +235,7 @@ def _go():
 
 def _base_layout(fig, title, height=340):
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="#1F3B57", family="Arial Black, Arial")),
+        title=dict(text=title, font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
         height=height,
         margin=dict(l=8, r=8, t=44, b=4),
         legend=dict(orientation="h", y=-0.22, font=dict(size=11)),
@@ -228,7 +244,7 @@ def _base_layout(fig, title, height=340):
         font=dict(family="Arial", size=11, color="#334155"),
     )
     fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="#E6ECF2", griddash="dot", zerolinecolor="#D6DEE8")
+    fig.update_yaxes(gridcolor="#E7E4D8", griddash="dot", zerolinecolor="#D9D5C5")
     return fig
 
 
@@ -274,7 +290,7 @@ def donut(value, color, delta=None, height=168):
     fig = go.Figure(go.Pie(values=[v01, 1 - v01], hole=0.74, sort=False, direction="clockwise",
                            marker=dict(colors=[color, LIGHT]), textinfo="none", hoverinfo="skip"))
     fig.add_annotation(text=f"<b>{v * 100:.0f}%</b>", showarrow=False,
-                       font=dict(size=22, color="#1F3B57", family="Arial Black, Arial"))
+                       font=dict(size=22, color="#21362B", family="Arial Black, Arial"))
     fig.update_layout(height=height, margin=dict(l=6, r=6, t=6, b=0),
                       showlegend=False, paper_bgcolor="white")
     return fig
@@ -284,7 +300,7 @@ def spark(series, color=TEAL, height=52):
     go = _go()
     fig = go.Figure(go.Scatter(y=list(series), mode="lines",
                                line=dict(color=color, width=2),
-                               fill="tozeroy", fillcolor="rgba(23,162,166,0.10)"))
+                               fill="tozeroy", fillcolor="rgba(33,54,43,0.10)"))
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=2, b=0),
                       plot_bgcolor="white", paper_bgcolor="white", showlegend=False)
     fig.update_xaxes(visible=False)
@@ -359,11 +375,16 @@ def main():
                 v = st.selectbox(label, options, index=options.index(default), key=key)
         return v or default
 
+    _b64 = _logo_b64()
+    if _b64:
+        st.markdown(
+            '<div class="nm-banner"><img src="data:image/jpeg;base64,' + _b64 + '"/>'
+            '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
+            unsafe_allow_html=True,
+        )
+
     with st.container(border=True):
-        r1logo, r1a, r1b = st.columns([0.45, 4.75, 0.8], vertical_alignment="center")
-        with r1logo:
-            if os.path.exists(LOGO_PATH):
-                st.image(LOGO_PATH, width=58)
+        r1a, r1b = st.columns([5.2, 0.8], vertical_alignment="bottom")
         with r1a:
             sel_disp = _picker("Market", list(disp.values()), disp[countries[0]], "flt_cty")
             sel_country = rev.get(sel_disp, countries[0])
@@ -594,10 +615,10 @@ def main():
             except (AttributeError, TypeError):
                 fig = px.scatter_mapbox(da, mapbox_style="carto-positron", **kwargs)
             fig.update_traces(textposition="top center",
-                              textfont=dict(size=11, color="#1F3B57"))
+                              textfont=dict(size=11, color="#21362B"))
             fig.update_layout(
                 title=dict(text=f"{sel_label} - month by month (press play)",
-                           font=dict(size=14, color="#1F3B57", family="Arial Black, Arial")),
+                           font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
                 margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
                 legend=dict(orientation="h", y=-0.02, font=dict(size=11)),
             )
@@ -672,9 +693,9 @@ def main():
     fcol1, fcol2 = st.columns([0.25, 9.75], vertical_alignment="center")
     with fcol1:
         if os.path.exists(LOGO_PATH):
-            st.image(LOGO_PATH, width=34)
+            st.image(LOGO_PATH, width=36)
     with fcol2:
-        st.caption("**KitchenPark - ME RevOps** | Source: `" + BRIDGE_TABLE + "` - same bridge the "
+        st.caption("**NAMAA - ME RevOps** | Source: `" + BRIDGE_TABLE + "` - same bridge the "
                    "Google Sheets panel reads; rebuilt every 12h. Current partial month is "
                    "dotted/grey and excluded from KPIs.")
 
