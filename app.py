@@ -521,36 +521,48 @@ def main():
 
     m1, m2 = st.columns([3, 2])
     with m1:
-        # Animated choropleth: press play to watch the metric move month by month.
+        # Real tile map (Leaflet-style basemap, same look as the Talabat site): bubbles at each
+        # market sized by the metric, animated month by month (press play / drag the slider).
         try:
             import plotly.express as px
 
             da = dc.dropna(subset=[sel_col]).copy()
-            da["iso"] = da["country"].map(COUNTRY_ISO)
             da = da.sort_values("month_end")
-            fig = px.choropleth(
-                da, locations="iso", color=sel_col, animation_frame="month_label",
-                hover_name="country",
-                color_continuous_scale=[[0.0, "#DDEAF3"], [0.5, TEAL], [1.0, NAVY]],
-                range_color=(float(da[sel_col].min()), float(da[sel_col].max())),
+            da["lat"] = da["country"].map(lambda c: COUNTRY_CENTROID.get(c, (None, None))[0])
+            da["lon"] = da["country"].map(lambda c: COUNTRY_CENTROID.get(c, (None, None))[1])
+            da["size_v"] = da[sel_col].astype(float).abs() + 1e-9
+            da["lbl"] = [f"{c}: {fmt(v, sel_kind)}" for c, v in zip(da["country"], da[sel_col])]
+            kwargs = dict(
+                lat="lat", lon="lon", size="size_v", color="country",
+                color_discrete_map=COUNTRY_COLORS, text="lbl",
+                hover_name="lbl", hover_data={"lat": False, "lon": False, "size_v": False,
+                                              "country": False, "month_label": True},
+                animation_frame="month_label", size_max=42,
+                zoom=4.4, center={"lat": 26.0, "lon": 49.6}, height=480,
             )
-            fig.update_geos(fitbounds="locations", visible=False, bgcolor="white",
-                            showcountries=True, countrycolor="#E2E8F0",
-                            showland=True, landcolor="#F8FAFC")
+            try:
+                fig = px.scatter_map(da, map_style="carto-positron", **kwargs)
+            except (AttributeError, TypeError):
+                fig = px.scatter_mapbox(da, mapbox_style="carto-positron", **kwargs)
+            fig.update_traces(textposition="top center",
+                              textfont=dict(size=11, color="#1F3B57"))
             fig.update_layout(
                 title=dict(text=f"{sel_label} - month by month (press play)",
                            font=dict(size=14, color="#1F3B57", family="Arial Black, Arial")),
-                height=470, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
-                coloraxis_colorbar=dict(thickness=10, len=0.6, tickfont=dict(size=10)),
+                margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
+                legend=dict(orientation="h", y=-0.02, font=dict(size=11)),
             )
             # Start on the last closed month instead of the first frame.
-            target = kpi_row["month_label"]
-            for i, fr in enumerate(fig.frames):
-                if fr.name == target:
-                    fig.layout.sliders[0].active = i
-                    fig.update_traces(z=fig.frames[i].data[0].z,
-                                      locations=fig.frames[i].data[0].locations)
-                    break
+            try:
+                target = kpi_row["month_label"]
+                for i, fr in enumerate(fig.frames):
+                    if fr.name == target:
+                        fig.layout.sliders[0].active = i
+                        for tr_old, tr_new in zip(fig.data, fr.data):
+                            tr_old.update(tr_new)
+                        break
+            except Exception:
+                pass
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         except Exception:
             st.info("Map unavailable.")
