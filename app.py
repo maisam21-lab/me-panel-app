@@ -332,9 +332,7 @@ def main():
     all_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
     cur_month_start = pd.Timestamp.today().normalize().replace(day=1)
 
-    # ---- header + top filter bar (pills + period presets) ----
-    st.markdown('<div class="hdr"><span class="t">ME Sales Panel</span></div>', unsafe_allow_html=True)
-
+    # ---- top filter bar (pills + period presets); no page title - the browser tab carries the name ----
     FLAG = {"Middle East": "\U0001F30D", "Saudi Arabia": "\U0001F1F8\U0001F1E6",
             "UAE": "\U0001F1E6\U0001F1EA", "Kuwait": "\U0001F1F0\U0001F1FC",
             "Bahrain": "\U0001F1E7\U0001F1ED", "Qatar": "\U0001F1F6\U0001F1E6"}
