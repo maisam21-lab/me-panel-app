@@ -58,9 +58,11 @@ def _bq_client():
             info.setdefault("token_uri", "https://oauth2.googleapis.com/token")
             info.setdefault("auth_uri", "https://accounts.google.com/o/oauth2/auth")
             creds = service_account.Credentials.from_service_account_info(
-                info, scopes=["https://www.googleapis.com/auth/bigquery.readonly"]
+                info, scopes=["https://www.googleapis.com/auth/bigquery"]
             )
-            return bigquery.Client(project=BQ_PROJECT, credentials=creds)
+            # Jobs (if any) run in the SA's own project; data reads hit BQ_PROJECT tables.
+            job_project = info.get("project_id") or BQ_PROJECT
+            return bigquery.Client(project=job_project, credentials=creds)
         except Exception:
             pass  # invalid/placeholder SA -> fall through to ADC
     return bigquery.Client(project=BQ_PROJECT)  # Application Default Credentials
@@ -68,15 +70,29 @@ def _bq_client():
 
 @st.cache_data(ttl=900, show_spinner="Loading panel data from BigQuery...")
 def load_bridge() -> pd.DataFrame:
-    """Pull the bridge (one row per country x month). Cached 15 min; the table rebuilds every 12h."""
+    """Pull the bridge (one row per country x month). Cached 15 min; the table rebuilds every 12h.
+
+    Two read paths:
+      1. SQL query (needs bigquery.jobs.create somewhere) - preferred.
+      2. Direct table read via list_rows (needs ONLY dataset-level read on the bridge,
+         no job permissions at all) - fallback for restricted service accounts.
+    """
     client = _bq_client()
-    query = (
-        "SELECT * FROM `" + BRIDGE_TABLE + "` "
-        "WHERE month_end >= DATE '" + START_MONTH + "' "
-        "AND month_end <= LAST_DAY(CURRENT_DATE(), MONTH) "
-        "ORDER BY month_end, country"
-    )
-    rows = list(client.query(query).result())
+    rows = None
+    try:
+        query = (
+            "SELECT * FROM `" + BRIDGE_TABLE + "` "
+            "WHERE month_end >= DATE '" + START_MONTH + "' "
+            "AND month_end <= LAST_DAY(CURRENT_DATE(), MONTH) "
+            "ORDER BY month_end, country"
+        )
+        rows = list(client.query(query).result())
+    except Exception as query_err:
+        try:
+            table = client.get_table(BRIDGE_TABLE)
+            rows = list(client.list_rows(table))
+        except Exception:
+            raise query_err  # surface the original (usually clearer) error
     out = []
     for row in rows:
         d = dict(row)
@@ -87,6 +103,11 @@ def load_bridge() -> pd.DataFrame:
     df = pd.DataFrame(out)
     if not df.empty:
         df["month_end"] = pd.to_datetime(df["month_end"])
+        # list_rows returns the whole table unfiltered -> apply the window client-side.
+        start = pd.Timestamp(START_MONTH)
+        end = pd.Timestamp.today().normalize() + pd.offsets.MonthEnd(0)
+        df = df[(df["month_end"] >= start) & (df["month_end"] <= end)]
+        df = df.sort_values(["month_end", "country"]).reset_index(drop=True)
     return df
 
 
