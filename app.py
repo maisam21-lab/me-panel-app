@@ -215,7 +215,13 @@ def _access_gate():
     current = (st.session_state.get("me_user_email") or "").strip().lower()
     if current in allowed:
         return
-    st.markdown('<div class="hdr"><span class="t">ME Sales Panel</span></div>', unsafe_allow_html=True)
+    _b64 = _logo_b64()
+    if _b64:
+        st.markdown(
+            '<div class="nm-banner"><img src="data:image/jpeg;base64,' + _b64 + '"/>'
+            '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
+            unsafe_allow_html=True,
+        )
     st.write("Enter your work email to open the panel.")
     email = st.text_input("Email", key="me_email_input")
     if st.button("Open", type="primary"):
