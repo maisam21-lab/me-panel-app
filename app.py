@@ -758,36 +758,35 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             sel_disp = _picker("Market", list(disp.values()), disp[countries[0]], "flt_cty")
             sel_country = rev.get(sel_disp, countries[0])
         with r1b:
-            try:
-                _refresh = st.button("Refresh", icon=":material/refresh:", use_container_width=True)
-            except TypeError:
-                _refresh = st.button("Refresh", use_container_width=True)
-            if _refresh:
-                load_bridge.clear()
-                st.rerun()
-        r2a, r2b = st.columns([4, 2], vertical_alignment="center")
-        with r2a:
-            period = _picker("Period", ["3M", "6M", "12M", "YTD", "All", "Custom"], "All", "flt_period")
-        with r2b:
-            st.caption("Bridge through **" + all_labels[-1] + "** - refreshed every 12h, "
-                       "same source as the Sheets panel")
+            # Refresh is a developer-only control (cache-buster); viewers get the 15-min cache.
+            if _is_developer():
+                try:
+                    _refresh = st.button("Refresh", icon=":material/refresh:", use_container_width=True)
+                except TypeError:
+                    _refresh = st.button("Refresh", use_container_width=True)
+                if _refresh:
+                    load_bridge.clear()
+                    st.rerun()
+        period = _picker("Period", ["3M", "6M", "12M", "YTD", "All", "Custom"], "All", "flt_period")
         custom_rng = None
         if period == "Custom":
+            _min_d = pd.Timestamp(all_months[0]).to_pydatetime().date().replace(day=1)
+            _max_d = pd.Timestamp(all_months[-1]).to_pydatetime().date()
             try:
-                _pop = st.popover("Pick a custom month range")
+                _pop = st.popover("Pick dates")
             except Exception:
                 _pop = st.container()
             with _pop:
-                if len(all_labels) > 1:
-                    custom_rng = st.select_slider("Months", options=all_labels,
-                                                  value=(all_labels[0], all_labels[-1]))
+                _cal = st.date_input("Custom range", value=(_min_d, _max_d),
+                                     min_value=_min_d, max_value=_max_d, key="flt_custom_cal")
+            if isinstance(_cal, (list, tuple)) and len(_cal) == 2 and all(_cal):
+                custom_rng = _cal
 
     # Resolve the month window from the preset.
     if period == "Custom" and custom_rng:
-        i0, i1 = all_labels.index(custom_rng[0]), all_labels.index(custom_rng[1])
-        if i0 > i1:
-            i0, i1 = i1, i0
-        keep = all_months[i0:i1 + 1]
+        _c0 = pd.Timestamp(custom_rng[0]).replace(day=1)
+        _c1 = pd.Timestamp(custom_rng[1]) + pd.offsets.MonthEnd(0)
+        keep = [m for m in all_months if _c0 <= pd.Timestamp(m) <= _c1] or all_months
     elif period in ("3M", "6M", "12M"):
         n = int(period[:-1])
         keep = all_months[-(n + 1):]  # last N closed months + the current partial one
