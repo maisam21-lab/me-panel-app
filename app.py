@@ -227,6 +227,10 @@ COMPARE_METRICS = [
 ]
 
 COUNTRY_ISO = {"Saudi Arabia": "SAU", "UAE": "ARE", "Kuwait": "KWT", "Bahrain": "BHR", "Qatar": "QAT"}
+COUNTRY_CENTROID = {  # (lat, lon) for the map bubbles; Bahrain nudged off Qatar
+    "Saudi Arabia": (24.0, 44.5), "UAE": (23.6, 54.2), "Kuwait": (29.6, 47.6),
+    "Bahrain": (26.9, 50.4), "Qatar": (24.9, 51.2),
+}
 
 
 # ---------------------------------------------------------------- access gate
