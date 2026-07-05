@@ -332,33 +332,72 @@ def main():
     all_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
     cur_month_start = pd.Timestamp.today().normalize().replace(day=1)
 
-    # ---- header + top filter bar ----
+    # ---- header + top filter bar (pills + period presets) ----
     st.markdown('<div class="hdr"><span class="t">ME Sales Panel</span></div>', unsafe_allow_html=True)
+
+    FLAG = {"Middle East": "\U0001F30D", "Saudi Arabia": "\U0001F1F8\U0001F1E6",
+            "UAE": "\U0001F1E6\U0001F1EA", "Kuwait": "\U0001F1F0\U0001F1FC",
+            "Bahrain": "\U0001F1E7\U0001F1ED", "Qatar": "\U0001F1F6\U0001F1E6"}
+    countries = [c for c in COUNTRIES if c in set(df["country"])]
+    disp = {c: (FLAG.get(c, "") + " " + c).strip() for c in countries}
+    rev = {v: k for k, v in disp.items()}
+
+    def _picker(label, options, default, key):
+        """Segmented pills with graceful fallback for older Streamlit versions."""
+        try:
+            v = st.segmented_control(label, options, default=default, key=key)
+        except Exception:
+            try:
+                v = st.pills(label, options, default=default, key=key)
+            except Exception:
+                v = st.selectbox(label, options, index=options.index(default), key=key)
+        return v or default
+
     with st.container(border=True):
-        f1, f2, f3 = st.columns([1.3, 3.2, 0.8], vertical_alignment="bottom")
-        with f1:
-            countries = [c for c in COUNTRIES if c in set(df["country"])]
-            sel_country = st.selectbox(
-                "Country", countries, index=0,
-                help="Source: " + BRIDGE_TABLE + " - rebuilt every 12h; same bridge the Google "
-                     "Sheets panel reads. The current (partial) month is dotted/grey on charts "
-                     "and excluded from headline KPIs.",
-            )
-        with f2:
-            if len(all_labels) > 1:
-                rng = st.select_slider("Months", options=all_labels,
-                                       value=(all_labels[0], all_labels[-1]))
-            else:
-                rng = (all_labels[0], all_labels[-1])
-        with f3:
-            if st.button("Refresh", use_container_width=True):
+        r1a, r1b = st.columns([5.2, 0.8], vertical_alignment="bottom")
+        with r1a:
+            sel_disp = _picker("Market", list(disp.values()), disp[countries[0]], "flt_cty")
+            sel_country = rev.get(sel_disp, countries[0])
+        with r1b:
+            try:
+                _refresh = st.button("Refresh", icon=":material/refresh:", use_container_width=True)
+            except TypeError:
+                _refresh = st.button("Refresh", use_container_width=True)
+            if _refresh:
                 load_bridge.clear()
                 st.rerun()
+        r2a, r2b = st.columns([4, 2], vertical_alignment="center")
+        with r2a:
+            period = _picker("Period", ["3M", "6M", "12M", "YTD", "All", "Custom"], "All", "flt_period")
+        with r2b:
+            st.caption("Bridge through **" + all_labels[-1] + "** - refreshed every 12h, "
+                       "same source as the Sheets panel")
+        custom_rng = None
+        if period == "Custom":
+            try:
+                _pop = st.popover("Pick a custom month range")
+            except Exception:
+                _pop = st.container()
+            with _pop:
+                if len(all_labels) > 1:
+                    custom_rng = st.select_slider("Months", options=all_labels,
+                                                  value=(all_labels[0], all_labels[-1]))
 
-    i0, i1 = all_labels.index(rng[0]), all_labels.index(rng[1])
-    if i0 > i1:
-        i0, i1 = i1, i0
-    keep_months = set(all_months[i0:i1 + 1])
+    # Resolve the month window from the preset.
+    if period == "Custom" and custom_rng:
+        i0, i1 = all_labels.index(custom_rng[0]), all_labels.index(custom_rng[1])
+        if i0 > i1:
+            i0, i1 = i1, i0
+        keep = all_months[i0:i1 + 1]
+    elif period in ("3M", "6M", "12M"):
+        n = int(period[:-1])
+        keep = all_months[-(n + 1):]  # last N closed months + the current partial one
+    elif period == "YTD":
+        _yr = pd.Timestamp.today().year
+        keep = [m for m in all_months if pd.Timestamp(m).year == _yr] or all_months
+    else:
+        keep = all_months
+    keep_months = set(keep)
 
     d = df[(df["country"] == sel_country) & (df["month_end"].isin(keep_months))]
     d = d.sort_values("month_end").reset_index(drop=True)
