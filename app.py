@@ -27,7 +27,8 @@ AMBER = "#F59E0B"
 SLATE = "#94A3B8"
 GREEN = "#16A34A"
 
-st.set_page_config(page_title="ME Sales Panel", layout="wide", page_icon=":bar_chart:")
+st.set_page_config(page_title="ME Sales Panel", layout="wide", page_icon=":bar_chart:",
+                   initial_sidebar_state="collapsed")
 
 st.markdown(
     """
@@ -60,7 +61,8 @@ st.markdown(
     .sec { font-size: 0.95rem; font-weight: 800; color: #0B3B37; text-transform: uppercase;
            letter-spacing: 0.05em; margin: 18px 0 2px 0; }
     .stDataFrame thead th { background: #F1F5F9 !important; font-weight: 600 !important; }
-    section[data-testid="stSidebar"] { background: #FFFFFF; border-right: 3px solid #0F766E; }
+    /* No sidebar: all filters live in the top bar */
+    section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -327,24 +329,28 @@ def main():
     all_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
     cur_month_start = pd.Timestamp.today().normalize().replace(day=1)
 
-    # ---- sidebar filters ----
-    with st.sidebar:
-        st.markdown("### Filters")
-        countries = [c for c in COUNTRIES if c in set(df["country"])]
-        sel_country = st.selectbox("Country", countries, index=0)
-        if len(all_labels) > 1:
-            rng = st.select_slider("Months", options=all_labels,
-                                   value=(all_labels[0], all_labels[-1]))
-        else:
-            rng = (all_labels[0], all_labels[-1])
-        if st.button("Refresh data"):
-            load_bridge.clear()
-            st.rerun()
-        st.caption(
-            "Source: `" + BRIDGE_TABLE + "` - rebuilt every 12h. Same bridge the Google Sheets "
-            "panel reads. Recognized revenue matures over ~2 months; the current (partial) month "
-            "is shown dotted/grey on charts and excluded from headline KPIs."
-        )
+    # ---- top filter bar (no sidebar) ----
+    st.markdown('<div class="hdr"><span class="t">ME Sales Panel</span></div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        f1, f2, f3 = st.columns([1.3, 3.2, 0.8], vertical_alignment="bottom")
+        with f1:
+            countries = [c for c in COUNTRIES if c in set(df["country"])]
+            sel_country = st.selectbox(
+                "Country", countries, index=0,
+                help="Source: " + BRIDGE_TABLE + " - rebuilt every 12h; same bridge the Google "
+                     "Sheets panel reads. Recognized revenue matures over ~2 months; the current "
+                     "(partial) month is dotted/grey on charts and excluded from headline KPIs.",
+            )
+        with f2:
+            if len(all_labels) > 1:
+                rng = st.select_slider("Months", options=all_labels,
+                                       value=(all_labels[0], all_labels[-1]))
+            else:
+                rng = (all_labels[0], all_labels[-1])
+        with f3:
+            if st.button("Refresh", use_container_width=True):
+                load_bridge.clear()
+                st.rerun()
 
     i0, i1 = all_labels.index(rng[0]), all_labels.index(rng[1])
     if i0 > i1:
@@ -365,7 +371,7 @@ def main():
     kpi_prev = d.iloc[closed_idx - 1] if closed_idx > 0 else None
 
     st.markdown(
-        '<div class="hdr"><span class="t">ME Sales Panel</span>'
+        '<div class="hdr">'
         f'<span class="badge">{sel_country}</span>'
         f'<span class="badge">KPIs as of {kpi_row["month_label"]} (last closed month)</span></div>',
         unsafe_allow_html=True,
