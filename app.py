@@ -40,6 +40,16 @@ st.set_page_config(page_title="ME Sales Panel | NAMAA", layout="wide", page_icon
                    initial_sidebar_state="collapsed")
 
 
+MOTIF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "namaa_motif.png")
+
+# ArcGIS Location Platform key for the Esri basemap tiles (same map service family as the
+# Talabat site). Override via ARCGIS_API_KEY in secrets; this fallback keeps the map working.
+ARCGIS_DEFAULT_KEY = ("AAPTazJyeyXdia4yZ8kifX4yDiw..tmKsfsr3ICm0GmhX-8bLyCDCls6oQi4tGrZizEYySs_"
+                      "5IPHbtB5rkpdZc7WBoRiAp9PGgI0sp-WRrnzzuvrzbYqasb1qB_altV_pkh6jbu6YIUEk386"
+                      "TZhBDRRN9AQ_nxQfLIE7bVHSdU7gKEABklA-fj-Oc_ktthlJvkHTkYRNwSy9R8Zna-rovVMy"
+                      "lRxjlwuqX9AuEWbcA-8sJUlH-G8FandT3O1Dj14qi7_ntgKh5aC_YrK9ebg..AT1_mzOu9Cgs")
+
+
 @st.cache_data(show_spinner=False)
 def _logo_b64() -> str:
     try:
@@ -47,6 +57,24 @@ def _logo_b64() -> str:
             return base64.b64encode(f.read()).decode("ascii")
     except Exception:
         return ""
+
+
+@st.cache_data(show_spinner=False)
+def _motif_b64() -> str:
+    try:
+        with open(MOTIF_PATH, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def _inject_motif():
+    """The terracotta NAMAA line-art, pinned to the top-right corner like the brand banner."""
+    _mb = _motif_b64()
+    if _mb:
+        st.markdown('<img class="nm-motif" src="data:image/png;base64,' + _mb + '"/>',
+                    unsafe_allow_html=True)
+
 
 st.markdown(
     """
@@ -86,6 +114,9 @@ st.markdown(
            border-left: 5px double #D97757; padding-left: 10px; }
     section[data-testid="stSidebar"], [data-testid="collapsedControl"] { display: none !important; }
     .stDataFrame thead th { background: #F0EEE6 !important; font-weight: 600 !important; }
+    /* NAMAA terracotta line-art, top-right corner (brand banner motif) */
+    .nm-motif { position: fixed; top: 36px; right: 0; width: 320px; opacity: 0.9;
+                z-index: 0; pointer-events: none; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -223,6 +254,7 @@ def _access_gate():
             '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
             unsafe_allow_html=True,
         )
+    _inject_motif()
     st.write("Enter your work email to open the panel.")
     email = st.text_input("Email", key="me_email_input")
     if st.button("Open", type="primary"):
@@ -345,24 +377,178 @@ def stacked_pct(d, x, buckets, title, closed_idx):
     return fig
 
 
-# ---------------------------------------------------------------- main
-def main():
-    _access_gate()
+# ---------------------------------------------------------------- All Hands scorecards
+# Rows for the two Google Sheet "All Hands" scorecards. Tuples: (label, bridge column, format kind, up_is_good).
+# label=None -> spacer row (blank line for visual grouping). up_is_good=True colors positive MoM green.
+CK_SCORECARD_METRICS = [
+    ("Kitchens sold",     "cws",                          "num",  True),
+    ("Approved Deals",    "approved_deals",               "num",  True),
+    ("RRA %",             "rra",                          "pct",  True),
+    (None, None, None, None),
+    ("Kitchens churned",  "churns_excl_transfers",        "num",  False),
+    ("RRL %",             "rrl",                          "pct",  False),
+    (None, None, None, None),
+    ("Net Adds",          "net_adds",                     "num",  True),
+    ("NRRA %",            "nrra",                         "pct",  True),
+    (None, None, None, None),
+    ("All AE Prod.",      "sales_team_cw_productivity",   "num1", True),
+    (None, None, None, None),
+    ("Live kitchens",     "total_kitchens",               "num",  True),
+    (None, None, None, None),
+    ("Live Sold",         "live_sold_rate",               "pct",  True),
+    ("Occupancy",         "occupancy",                    "pct",  True),
+    (None, None, None, None),
+    ("Occupied Kx",       "occupied_kitchens",            "num",  True),
+]
 
-    try:
-        df = load_bridge()
-    except Exception as e:
-        st.error("Could not load the bridge from BigQuery. Check credentials.\n\nDetails: " + str(e))
-        st.stop()
-    if df.empty:
-        st.warning("The bridge returned no rows.")
-        st.stop()
+CR_SCORECARD_METRICS = [
+    ("Cloud Retail CWs",       "cr_cws",       "num", True),
+    ("CR RRA $",               "cr_rra_usd",   "usd", True),
+    (None, None, None, None),
+    ("Cloud Retail Churns",    "cr_churns",    "num", False),
+    ("CR RRL $",               "cr_rrl_usd",   "usd", False),
+    (None, None, None, None),
+    ("Cloud Retail Net Adds",  "cr_net_adds",  "num", True),  # calculated: cr_cws - cr_churns
+    ("CR NRRA $",              "cr_nrra_usd",  "usd", True),
+]
 
-    df["month_label"] = df["month_end"].dt.strftime("%b %Y")
-    all_months = sorted(df["month_end"].unique())
-    all_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
-    cur_month_start = pd.Timestamp.today().normalize().replace(day=1)
+SCORECARD_REGIONS = ["Middle East", "UAE", "Saudi Arabia", "Kuwait"]
+SCORECARD_REGION_DISPLAY = {"Saudi Arabia": "KSA"}
 
+
+def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix):
+    """Reproduce the Google Sheet All Hands scorecard layout: 4 region blocks side-by-side,
+    each with the last 3 months (as-of picker) + a MoM Δ column, one row per metric.
+    Negative MoM in red / positive in green (unless up_is_good=False, then flipped)."""
+    if df is None or df.empty or not all_months:
+        st.info("No panel data available.")
+        return
+
+    # Add calculated cr_net_adds if the two ingredients are there.
+    if any(m[1] == "cr_net_adds" for m in metrics_spec if m[1]) \
+            and "cr_net_adds" not in df.columns \
+            and {"cr_cws", "cr_churns"} <= set(df.columns):
+        df = df.copy()
+        df["cr_net_adds"] = df["cr_cws"] - df["cr_churns"]
+
+    # As-of month picker (newest first).
+    month_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
+    labels_desc = list(reversed(month_labels))
+    sel_label = st.selectbox(
+        "As-of month",
+        options=labels_desc,
+        index=0,
+        key=f"{key_prefix}_scorecard_asof",
+    )
+    sel_idx = month_labels.index(sel_label)
+    if sel_idx < 2:
+        st.warning("Need at least 3 months of history to build the scorecard. "
+                   "Pick a more recent as-of month or wait for more data.")
+        return
+    win = all_months[sel_idx - 2: sel_idx + 1]  # oldest, mid, newest (as-of)
+    win_hdrs = [pd.Timestamp(m).strftime("%b %y") for m in win]
+
+    # Build one HTML table so we can lay out 4 region blocks side-by-side.
+    n_regions = len(SCORECARD_REGIONS)
+    total_cols = 1 + n_regions * 4  # metric label + (3 months + MoM) per region
+    html = [
+        "<div class='scorecard-wrap'>",
+        f"<div class='scorecard-title'>{sel_label}</div>",
+        "<table class='scorecard'>",
+        "<colgroup>",
+        "<col class='c-label'/>",
+    ]
+    for _ in SCORECARD_REGIONS:
+        html += ["<col/>", "<col/>", "<col/>", "<col class='c-delta'/>"]
+    html.append("</colgroup>")
+
+    # Region banner row.
+    html.append("<thead>")
+    html.append("<tr>")
+    html.append("<th class='sc-empty'></th>")
+    for r in SCORECARD_REGIONS:
+        html.append(f"<th class='sc-region' colspan='4'>{SCORECARD_REGION_DISPLAY.get(r, r)}</th>")
+    html.append("</tr>")
+    # Month subheader.
+    html.append("<tr>")
+    html.append("<th class='sc-empty'></th>")
+    for _ in SCORECARD_REGIONS:
+        for h in win_hdrs:
+            html.append(f"<th class='sc-month'>{h}</th>")
+        html.append("<th class='sc-month'>MoM Δ</th>")
+    html.append("</tr>")
+    html.append("</thead><tbody>")
+
+    for label, col, kind, up_good in metrics_spec:
+        if label is None:
+            html.append(f"<tr class='sc-spacer'><td colspan='{total_cols}'>&nbsp;</td></tr>")
+            continue
+        html.append("<tr>")
+        html.append(f"<td class='sc-metric'>{label}</td>")
+        for region in SCORECARD_REGIONS:
+            row = df[(df["country"] == region) & (df["month_end"].isin(win))]
+            vals = []
+            for m in win:
+                r = row[row["month_end"] == m]
+                v = r[col].iloc[0] if (col in row.columns and not r.empty) else None
+                try:
+                    v = None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
+                except Exception:
+                    v = None
+                vals.append(v)
+            for v in vals:
+                html.append(f"<td class='sc-val'>{fmt(v, kind) if v is not None else '—'}</td>")
+            mom = (vals[-1] - vals[-2]) if (vals[-1] is not None and vals[-2] is not None) else None
+            if mom is None:
+                mom_cls = "sc-delta-na"
+                mom_txt = "—"
+            else:
+                if abs(mom) < 1e-12:
+                    mom_cls, mom_txt = "sc-delta-flat", fmt(mom, kind)
+                else:
+                    good = (mom > 0) if up_good else (mom < 0)
+                    mom_cls = "sc-delta-up" if good else "sc-delta-dn"
+                    mom_txt = fmt(mom, kind)
+            html.append(f"<td class='sc-delta {mom_cls}'>{mom_txt}</td>")
+        html.append("</tr>")
+
+    html.append("</tbody></table></div>")
+
+    st.markdown(
+        """
+        <style>
+        .scorecard-wrap { overflow-x: auto; padding: 6px 0 18px 0; }
+        .scorecard-title { font-size: 1.1rem; font-weight: 800; color: #1F3B57; margin: 6px 0 10px 2px; }
+        table.scorecard { border-collapse: separate; border-spacing: 0; width: 100%;
+                          font-family: Arial, sans-serif; font-size: 0.85rem; background: #F5F1E7; }
+        table.scorecard th, table.scorecard td { padding: 6px 10px; text-align: right; white-space: nowrap; }
+        table.scorecard col.c-label { width: 190px; }
+        table.scorecard col.c-delta { width: 82px; }
+        table.scorecard th.sc-empty { background: transparent; }
+        table.scorecard th.sc-region { background: transparent; color: #1F3B57; font-weight: 800;
+                                       text-align: center; font-size: 1rem; padding-bottom: 4px; }
+        table.scorecard th.sc-month { background: #21362B; color: #FFFFFF; font-weight: 700;
+                                      text-align: center; font-size: 0.78rem; letter-spacing: 0.02em; }
+        table.scorecard td.sc-metric { text-align: left; font-weight: 700; color: #21362B; }
+        table.scorecard td.sc-val { color: #21362B; font-weight: 600; }
+        table.scorecard td.sc-delta { font-weight: 800; }
+        table.scorecard .sc-delta-up { color: #16A34A; }
+        table.scorecard .sc-delta-dn { color: #E74C3C; }
+        table.scorecard .sc-delta-flat { color: #64748B; }
+        table.scorecard .sc-delta-na { color: #94A3B8; }
+        table.scorecard tr.sc-spacer td { padding: 4px 0; background: transparent; }
+        </style>
+        """ + "".join(html),
+        unsafe_allow_html=True,
+    )
+
+
+# ---------------------------------------------------------------- Panel Overview (existing dashboard)
+def _render_panel_overview(df, all_months, all_labels, cur_month_start):
+    """Existing 'Panel Overview' - filter bar, KPI gauges, KPI cards, Revenue,
+    Sales & Churn, Mix, Countries map + comparison, footer. Rendered inside the
+    'Panel Overview' tab. Banner and BQ load happen once in main() and are shared
+    across tabs, so both are stripped from here."""
     # ---- top filter bar (pills + period presets); no page title - the browser tab carries the name ----
     FLAG = {"Middle East": "\U0001F30D", "Saudi Arabia": "\U0001F1F8\U0001F1E6",
             "UAE": "\U0001F1E6\U0001F1EA", "Kuwait": "\U0001F1F0\U0001F1FC",
@@ -381,14 +567,6 @@ def main():
             except Exception:
                 v = st.selectbox(label, options, index=options.index(default), key=key)
         return v or default
-
-    _b64 = _logo_b64()
-    if _b64:
-        st.markdown(
-            '<div class="nm-banner"><img src="data:image/jpeg;base64,' + _b64 + '"/>'
-            '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
-            unsafe_allow_html=True,
-        )
 
     with st.container(border=True):
         r1a, r1b = st.columns([5.2, 0.8], vertical_alignment="bottom")
@@ -598,51 +776,66 @@ def main():
 
     m1, m2 = st.columns([3, 2])
     with m1:
-        # Real tile map (Leaflet-style basemap, same look as the Talabat site): bubbles at each
-        # market sized by the metric, animated month by month (press play / drag the slider).
+        # Real Esri basemap (ArcGIS tiles - same map service the Talabat site uses), with a
+        # month slider. Static per month: sturdier than plotly's frame animation on tile maps.
         try:
-            import plotly.express as px
-
-            da = dc.dropna(subset=[sel_col]).copy()
-            da = da.sort_values("month_end")
-            da["lat"] = da["country"].map(lambda c: COUNTRY_CENTROID.get(c, (None, None))[0])
-            da["lon"] = da["country"].map(lambda c: COUNTRY_CENTROID.get(c, (None, None))[1])
-            da["size_v"] = da[sel_col].astype(float).abs() + 1e-9
-            da["lbl"] = [f"{c}: {fmt(v, sel_kind)}" for c, v in zip(da["country"], da[sel_col])]
-            kwargs = dict(
-                lat="lat", lon="lon", size="size_v", color="country",
-                color_discrete_map=COUNTRY_COLORS, text="lbl",
-                hover_name="lbl", hover_data={"lat": False, "lon": False, "size_v": False,
-                                              "country": False, "month_label": True},
-                animation_frame="month_label", size_max=42,
-                zoom=4.4, center={"lat": 26.0, "lon": 49.6}, height=480,
-            )
-            try:
-                fig = px.scatter_map(da, map_style="carto-positron", **kwargs)
-            except (AttributeError, TypeError):
-                fig = px.scatter_mapbox(da, mapbox_style="carto-positron", **kwargs)
-            fig.update_traces(textposition="top center",
-                              textfont=dict(size=11, color="#21362B"))
-            fig.update_layout(
-                title=dict(text=f"{sel_label} - month by month (press play)",
-                           font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
-                margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
-                legend=dict(orientation="h", y=-0.02, font=dict(size=11)),
-            )
-            # Start on the last closed month instead of the first frame.
-            try:
-                target = kpi_row["month_label"]
-                for i, fr in enumerate(fig.frames):
-                    if fr.name == target:
-                        fig.layout.sliders[0].active = i
-                        for tr_old, tr_new in zip(fig.data, fr.data):
-                            tr_old.update(tr_new)
-                        break
-            except Exception:
-                pass
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        except Exception:
-            st.info("Map unavailable.")
+            _win_labels = [pd.Timestamp(m).strftime("%b %Y") for m in sorted(keep_months)]
+            if len(_win_labels) > 1:
+                _map_month = st.select_slider("Map month", options=_win_labels,
+                                              value=(kpi_row["month_label"]
+                                                     if kpi_row["month_label"] in _win_labels
+                                                     else _win_labels[-1]),
+                                              key="map_month")
+            else:
+                _map_month = _win_labels[0]
+            snapm = dc[dc["month_label"] == _map_month].dropna(subset=[sel_col]).copy()
+            if snapm.empty:
+                st.info("No data for this month.")
+            else:
+                go = _go()
+                cts = snapm["country"].tolist()
+                vals = snapm[sel_col].astype(float).tolist()
+                _vmax = max(abs(v) for v in vals) or 1.0
+                sizes = [16 + 30 * (abs(v) / _vmax) for v in vals]
+                mk = dict(size=sizes, color=[COUNTRY_COLORS.get(c, SLATE) for c in cts],
+                          opacity=0.88)
+                texts = [f"<b>{c}</b><br>{fmt(v, sel_kind)}" for c, v in zip(cts, vals)]
+                lats = [COUNTRY_CENTROID[c][0] for c in cts]
+                lons = [COUNTRY_CENTROID[c][1] for c in cts]
+                try:
+                    _token = str(st.secrets.get("ARCGIS_API_KEY", "")).strip()
+                except Exception:
+                    _token = ""
+                _token = _token or ARCGIS_DEFAULT_KEY
+                tile_url = ("https://static-map-tiles-api.arcgis.com/arcgis/rest/services/"
+                            "static-basemap-tiles-service/v1/arcgis/navigation/static/tile/"
+                            "{z}/{y}/{x}?token=" + _token)
+                map_cfg = dict(style="white-bg", center=dict(lat=26.0, lon=49.6), zoom=4.3,
+                               layers=[dict(below="traces", sourcetype="raster",
+                                            source=[tile_url])])
+                try:
+                    fig = go.Figure(go.Scattermap(
+                        lat=lats, lon=lons, mode="markers+text", marker=mk, text=texts,
+                        textposition="top center", textfont=dict(size=12, color="#21362B"),
+                        hoverinfo="text"))
+                    fig.update_layout(map=map_cfg)
+                except (AttributeError, ValueError):
+                    fig = go.Figure(go.Scattermapbox(
+                        lat=lats, lon=lons, mode="markers+text", marker=mk, text=texts,
+                        textposition="top center", textfont=dict(size=12, color="#21362B"),
+                        hoverinfo="text"))
+                    fig.update_layout(mapbox=map_cfg)
+                fig.update_layout(
+                    title=dict(text=f"{sel_label} - {_map_month}",
+                               font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
+                    height=470, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
+                    showlegend=False)
+                fig.add_annotation(text="Powered by Esri", x=1, y=0, xref="paper", yref="paper",
+                                   showarrow=False, xanchor="right", yanchor="bottom",
+                                   font=dict(size=9, color="#7C776A"))
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        except Exception as _map_err:
+            st.info("Map unavailable: " + str(_map_err)[:160])
     with m2:
         snap = dc[dc["month_end"] == kpi_row["month_end"]].dropna(subset=[sel_col]).sort_values(sel_col)
         fig = go.Figure(go.Bar(
@@ -705,6 +898,49 @@ def main():
         st.caption("**NAMAA - ME RevOps** | Source: `" + BRIDGE_TABLE + "` - same bridge the "
                    "Google Sheets panel reads; rebuilt every 12h. Current partial month is "
                    "dotted/grey and excluded from KPIs.")
+
+
+# ---------------------------------------------------------------- main
+def main():
+    """Access gate + load BQ bridge once, then dispatch to three tabs:
+    Panel Overview (existing dashboard) / ME All Hands Slides (Cloud Kitchens
+    scorecard) / CR ME All Hands Slides (Cloud Retail scorecard)."""
+    _access_gate()
+
+    try:
+        df = load_bridge()
+    except Exception as e:
+        st.error("Could not load the bridge from BigQuery. Check credentials.\n\nDetails: " + str(e))
+        st.stop()
+    if df.empty:
+        st.warning("The bridge returned no rows.")
+        st.stop()
+
+    df["month_label"] = df["month_end"].dt.strftime("%b %Y")
+    all_months = sorted(df["month_end"].unique())
+    all_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
+    cur_month_start = pd.Timestamp.today().normalize().replace(day=1)
+
+    # Banner persists across all tabs.
+    _b64 = _logo_b64()
+    if _b64:
+        st.markdown(
+            '<div class="nm-banner"><img src="data:image/jpeg;base64,' + _b64 + '"/>'
+            '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
+            unsafe_allow_html=True,
+        )
+
+    tab_overview, tab_ck, tab_cr = st.tabs([
+        "Panel Overview",
+        "ME All Hands Slides",
+        "CR ME All Hands Slides",
+    ])
+    with tab_overview:
+        _render_panel_overview(df, all_months, all_labels, cur_month_start)
+    with tab_ck:
+        _render_all_hands_scorecard(df, all_months, CK_SCORECARD_METRICS, "ck")
+    with tab_cr:
+        _render_all_hands_scorecard(df, all_months, CR_SCORECARD_METRICS, "cr")
 
 
 main()
