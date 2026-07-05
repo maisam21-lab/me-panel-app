@@ -289,6 +289,43 @@ def spark(series, color=TEAL, height=56):
     return fig
 
 
+COUNTRY_ISO = {"Saudi Arabia": "SAU", "UAE": "ARE", "Kuwait": "KWT", "Bahrain": "BHR", "Qatar": "QAT"}
+COUNTRY_CENTROID = {  # (lat, lon) for the value labels; Bahrain nudged off Qatar
+    "Saudi Arabia": (24.0, 44.5), "UAE": (23.6, 54.2), "Kuwait": (29.6, 47.6),
+    "Bahrain": (26.9, 50.4), "Qatar": (24.9, 51.2),
+}
+
+
+def country_map(snap_df, sel_col, sel_kind, title):
+    """Gulf choropleth: countries shaded by the metric, value labeled on each country."""
+    go = _go()
+    dd = snap_df[snap_df["country"].isin(COUNTRY_ISO)].dropna(subset=[sel_col]).copy()
+    fig = go.Figure(go.Choropleth(
+        locations=[COUNTRY_ISO[c] for c in dd["country"]],
+        z=dd[sel_col].astype(float),
+        colorscale=[[0.0, "#DDEEEB"], [1.0, "#0F766E"]],
+        marker_line_color="white", marker_line_width=1.4,
+        showscale=False,
+        hovertext=[f"{c}: {fmt(v, sel_kind)}" for c, v in zip(dd["country"], dd[sel_col])],
+        hoverinfo="text",
+    ))
+    fig.add_trace(go.Scattergeo(
+        lat=[COUNTRY_CENTROID[c][0] for c in dd["country"]],
+        lon=[COUNTRY_CENTROID[c][1] for c in dd["country"]],
+        text=[f"<b>{c}</b><br>{fmt(v, sel_kind)}" for c, v in zip(dd["country"], dd[sel_col])],
+        mode="text", textfont=dict(size=13, color="#0B3B37"),
+        hoverinfo="skip", showlegend=False,
+    ))
+    fig.update_geos(fitbounds="locations", visible=False, bgcolor="white",
+                    showcountries=True, countrycolor="#E2E8F0",
+                    showland=True, landcolor="#F8FAFC")
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14, color="#0B3B37", family="Arial Black, Arial")),
+        height=460, margin=dict(l=4, r=4, t=42, b=4), paper_bgcolor="white",
+    )
+    return fig
+
+
 def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=True):
     with col:
         with st.container(border=True):
@@ -510,6 +547,15 @@ def main():
 
         dc = df[(df["month_end"].isin(keep_months)) & (df["country"] != "Middle East")]
         dme = df[(df["month_end"].isin(keep_months)) & (df["country"] == "Middle East")].sort_values("month_end")
+
+        # Map hero: metric across the Gulf at the last closed month
+        snap_map = dc[dc["month_end"] == kpi_row["month_end"]]
+        if not snap_map.empty and sel_col in snap_map.columns:
+            st.plotly_chart(
+                country_map(snap_map, sel_col, sel_kind,
+                            f"{sel_label} - {kpi_row['month_label']}"),
+                use_container_width=True, config={"displayModeBar": False},
+            )
 
         go = _go()
         b1, b2 = st.columns([2, 3])
