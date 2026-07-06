@@ -4,3 +4,5 @@ plotly>=5.0
 google-cloud-bigquery>=3.0
 google-auth>=2.0
 python-pptx>=0.6.21
+requests>=2.28
+

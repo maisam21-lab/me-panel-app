@@ -540,6 +540,82 @@ def _chart_with_select(fig, key, config):
         return None
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def _gulf_geojson():
+    """Country boundary polygons for the 5 markets (world.geo.json, ISO3 ids). Cached a day."""
+    try:
+        import requests
+        r = requests.get(
+            "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json",
+            timeout=10)
+        gj = r.json()
+        keep = set(COUNTRY_ISO.values())
+        gj["features"] = [f for f in gj["features"] if f.get("id") in keep]
+        return gj if gj["features"] else None
+    except Exception:
+        return None
+
+
+def gulf_map(cts, vals, kind, title, height=470):
+    """The market-intelligence-style map: country AREAS shaded by the metric, drawn over the
+    Esri basemap (pan / scroll-zoom), value labels, no pins. Falls back to a plain filled map
+    if the boundary file or tile service is unreachable."""
+    go = _go()
+    gj = _gulf_geojson()
+    hover = [f"{c}: {fmt(v, kind)}" for c, v in zip(cts, vals)]
+    labels = [f"<b>{c}</b><br>{fmt(v, kind)}" for c, v in zip(cts, vals)]
+    lats = [COUNTRY_CENTROID[c][0] for c in cts]
+    lons = [COUNTRY_CENTROID[c][1] for c in cts]
+    scale = [[0.0, "#E5E9E0"], [0.55, "#5F8575"], [1.0, "#21362B"]]
+    if gj is not None:
+        try:
+            _token = str(st.secrets.get("ARCGIS_API_KEY", "")).strip()
+        except Exception:
+            _token = ""
+        _token = _token or ARCGIS_DEFAULT_KEY
+        tile_url = ("https://static-map-tiles-api.arcgis.com/arcgis/rest/services/"
+                    "static-basemap-tiles-service/v1/arcgis/navigation/static/tile/"
+                    "{z}/{y}/{x}?token=" + _token)
+        map_cfg = dict(style="white-bg", center=dict(lat=26.0, lon=49.6), zoom=4.3,
+                       layers=[dict(below="traces", sourcetype="raster", source=[tile_url])])
+        common = dict(geojson=gj, featureidkey="id",
+                      locations=[COUNTRY_ISO[c] for c in cts],
+                      z=[float(v) for v in vals], colorscale=scale, showscale=False,
+                      marker_opacity=0.75, marker_line_color="white", marker_line_width=1.6,
+                      hovertext=hover, hoverinfo="text", customdata=cts)
+        try:
+            fig = go.Figure(go.Choroplethmap(**common))
+            fig.add_trace(go.Scattermap(lat=lats, lon=lons, mode="text", text=labels,
+                                        textfont=dict(size=12, color="#21362B"),
+                                        hoverinfo="skip", showlegend=False, customdata=cts))
+            fig.update_layout(map=map_cfg)
+        except (AttributeError, ValueError):
+            fig = go.Figure(go.Choroplethmapbox(**common))
+            fig.add_trace(go.Scattermapbox(lat=lats, lon=lons, mode="text", text=labels,
+                                           textfont=dict(size=12, color="#21362B"),
+                                           hoverinfo="skip", showlegend=False, customdata=cts))
+            fig.update_layout(mapbox=map_cfg)
+        fig.add_annotation(text="Powered by Esri", x=1, y=0, xref="paper", yref="paper",
+                           showarrow=False, xanchor="right", yanchor="bottom",
+                           font=dict(size=9, color="#7C776A"))
+    else:
+        fig = go.Figure(go.Choropleth(
+            locations=[COUNTRY_ISO[c] for c in cts], z=[float(v) for v in vals],
+            colorscale=scale, marker_line_color="white", marker_line_width=1.4,
+            showscale=False, hovertext=hover, hoverinfo="text", customdata=cts))
+        fig.add_trace(go.Scattergeo(lat=lats, lon=lons, mode="text", text=labels,
+                                    textfont=dict(size=12, color="#21362B"),
+                                    hoverinfo="skip", showlegend=False, customdata=cts))
+        fig.update_geos(fitbounds="locations", visible=False, bgcolor="white",
+                        showcountries=True, countrycolor="#DAD6C8",
+                        showland=True, landcolor="#F8F7F2")
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
+        height=height, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
+        showlegend=False)
+    return fig
+
+
 def _clicked_country(ev):
     """Extract the clicked country from a plotly selection event (customdata carries it)."""
     try:
@@ -1380,28 +1456,17 @@ def _render_executive_view(df, all_months, cur_month_start):
         if snapc.empty:
             st.info("No data to map.")
         else:
-            fig = go.Figure(go.Choropleth(
-                locations=[COUNTRY_ISO[c] for c in snapc["country"]],
-                z=snapc[_mcol].astype(float),
-                colorscale=[[0.0, "#EAE7DC"], [1.0, "#21362B"]],
-                marker_line_color="white", marker_line_width=1.4, showscale=False,
-                hovertext=[f"{c}: {fmt(v, _mkind)}" for c, v in zip(snapc["country"], snapc[_mcol])],
-                hoverinfo="text"))
-            fig.add_trace(go.Scattergeo(
-                lat=[COUNTRY_CENTROID[c][0] for c in snapc["country"]],
-                lon=[COUNTRY_CENTROID[c][1] for c in snapc["country"]],
-                text=[f"<b>{EXEC_RDISP.get(c, c)}</b><br>{fmt(v, _mkind)}"
-                      for c, v in zip(snapc["country"], snapc[_mcol])],
-                mode="text", textfont=dict(size=12, color="#21362B"),
-                hoverinfo="skip", showlegend=False))
-            fig.update_geos(fitbounds="locations", visible=False, bgcolor="white",
-                            showcountries=True, countrycolor="#DAD6C8",
-                            showland=True, landcolor="#F8F7F2")
-            fig.update_layout(
-                title=dict(text=f"{_msel} - {asof_lbl}",
-                           font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
-                height=360, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white")
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            cts = snapc["country"].tolist()
+            vals = snapc[_mcol].astype(float).tolist()
+            fig = gulf_map(cts, vals, _mkind,
+                           f"{_msel} - {asof_lbl} (click a country for its deep dive)", height=380)
+            _ev = _chart_with_select(fig, "exec_map_sel",
+                                     {"displayModeBar": False, "scrollZoom": True})
+            _ck = _clicked_country(_ev) if _ev is not None else None
+            if _ck:
+                st.session_state["_pending_cty"] = _ck
+                st.session_state["_pending_view"] = "Market deep dive"
+                st.rerun()
 
 
 def _render_panel_overview(df, all_months, all_labels, cur_month_start):
@@ -1410,6 +1475,10 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
     'Panel Overview' tab. Banner and BQ load happen once in main() and are shared
     across tabs, so both are stripped from here."""
     # ---- view toggle: Executive (all markets, the slides' mental model) vs GM deep dive ----
+    # Apply a pending view jump (exec-map country click) BEFORE the widget is instantiated.
+    _pv = st.session_state.pop("_pending_view", None)
+    if _pv:
+        st.session_state["flt_view"] = _pv
     try:
         view = st.segmented_control("View", ["Executive", "Market deep dive"],
                                     default="Executive", key="flt_view") or "Executive"
@@ -1798,47 +1867,10 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             if snapm.empty:
                 st.info("No data for this month.")
             else:
-                go = _go()
                 cts = snapm["country"].tolist()
                 vals = snapm[sel_col].astype(float).tolist()
-                _vmax = max(abs(v) for v in vals) or 1.0
-                sizes = [16 + 30 * (abs(v) / _vmax) for v in vals]
-                mk = dict(size=sizes, color=[COUNTRY_COLORS.get(c, SLATE) for c in cts],
-                          opacity=0.88)
-                texts = [f"<b>{c}</b><br>{fmt(v, sel_kind)}" for c, v in zip(cts, vals)]
-                lats = [COUNTRY_CENTROID[c][0] for c in cts]
-                lons = [COUNTRY_CENTROID[c][1] for c in cts]
-                try:
-                    _token = str(st.secrets.get("ARCGIS_API_KEY", "")).strip()
-                except Exception:
-                    _token = ""
-                _token = _token or ARCGIS_DEFAULT_KEY
-                tile_url = ("https://static-map-tiles-api.arcgis.com/arcgis/rest/services/"
-                            "static-basemap-tiles-service/v1/arcgis/navigation/static/tile/"
-                            "{z}/{y}/{x}?token=" + _token)
-                map_cfg = dict(style="white-bg", center=dict(lat=26.0, lon=49.6), zoom=4.3,
-                               layers=[dict(below="traces", sourcetype="raster",
-                                            source=[tile_url])])
-                try:
-                    fig = go.Figure(go.Scattermap(
-                        lat=lats, lon=lons, mode="markers+text", marker=mk, text=texts,
-                        textposition="top center", textfont=dict(size=12, color="#21362B"),
-                        hoverinfo="text", customdata=cts))
-                    fig.update_layout(map=map_cfg)
-                except (AttributeError, ValueError):
-                    fig = go.Figure(go.Scattermapbox(
-                        lat=lats, lon=lons, mode="markers+text", marker=mk, text=texts,
-                        textposition="top center", textfont=dict(size=12, color="#21362B"),
-                        hoverinfo="text", customdata=cts))
-                    fig.update_layout(mapbox=map_cfg)
-                fig.update_layout(
-                    title=dict(text=f"{sel_label} - {_map_month} (click a bubble to focus)",
-                               font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
-                    height=470, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
-                    showlegend=False)
-                fig.add_annotation(text="Powered by Esri", x=1, y=0, xref="paper", yref="paper",
-                                   showarrow=False, xanchor="right", yanchor="bottom",
-                                   font=dict(size=9, color="#7C776A"))
+                fig = gulf_map(cts, vals, sel_kind,
+                               f"{sel_label} - {_map_month} (click a country to focus)")
                 _ev = _chart_with_select(fig, "map_sel",
                                          {"displayModeBar": False, "scrollZoom": True})
                 _ck = _clicked_country(_ev) if _ev is not None else None
