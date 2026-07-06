@@ -123,6 +123,22 @@ st.markdown(
     .nm-insight { background: #FBFAF3; border-left: 3px solid #D97757; border-radius: 8px;
                   padding: 7px 12px; margin: 2px 0 10px 0; color: #4A5548;
                   font-size: 0.84rem; }
+    /* Executive metric x market grid (mirrors the All Hands slide mental model) */
+    .exec-wrap { background: #FFFFFF; border: 1px solid #E0DCCE; border-radius: 14px;
+                 padding: 6px 10px; box-shadow: 0 2px 6px rgba(33,54,43,0.08); overflow-x: auto; }
+    .exec-grid { width: 100%; border-collapse: collapse; }
+    .exec-grid th { background: #F0EEE6; color: #21362B; font-size: 0.78rem; font-weight: 800;
+                    text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 12px;
+                    text-align: right; }
+    .exec-grid th:first-child { text-align: left; }
+    .exec-grid td { padding: 7px 12px; font-size: 0.9rem; text-align: right;
+                    border-bottom: 1px solid #F1EEE4; color: #21362B; }
+    .exec-grid td:first-child { text-align: left; font-weight: 600; }
+    .exec-grid tr.exec-band td { background: #21362B; color: #FFFFFF; font-size: 0.7rem;
+                                 font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+                                 padding: 5px 12px; border-bottom: none; }
+    .exec-grid .ev { font-weight: 800; }
+    .exec-grid .ed { font-size: 0.72rem; display: block; margin-top: 1px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1025,11 +1041,220 @@ def _render_all_hands_scorecard(df, all_months, metrics_spec, key_prefix, *, ppt
 
 
 # ---------------------------------------------------------------- Panel Overview (existing dashboard)
+# ---------------------------------------------------------------- Executive view
+# The CEO/GM mental model, taken from the All Hands slides: all four markets side by side,
+# the slide's exact metric groups (Growth -> Churn -> Net -> Productivity -> Footprint ->
+# Utilization), MoM direction on everything, %-of-base revenue metrics rather than raw $.
+EXEC_GROUPS = [
+    ("Growth", [("Kitchens sold", "cws", "num", True),
+                ("Approved Deals", "approved_deals", "num", True),
+                ("RRA %", "rra", "pct", True)]),
+    ("Churn", [("Kitchens churned", "churns_excl_transfers", "num", False),
+               ("RRL %", "rrl", "pct", False)]),
+    ("Net", [("Net Adds", "net_adds", "num", True),
+             ("NRRA %", "nrra", "pct", True)]),
+    ("Productivity", [("AE Productivity (CWs/AE)", "sales_team_cw_productivity", "num1", True)]),
+    ("Footprint", [("Owned sites", "all_facilities", "num", True),
+                   ("Live kitchens", "total_kitchens", "num", True)]),
+    ("Utilization", [("Live Sold", "live_sold_rate", "pct", True),
+                     ("Occupancy", "occupancy", "pct", True),
+                     ("Occupied kitchens", "occupied_kitchens", "num", True)]),
+]
+EXEC_REGIONS = ["Middle East", "UAE", "Saudi Arabia", "Kuwait"]
+EXEC_RDISP = {"Saudi Arabia": "KSA", "Middle East": "ME"}
+
+
+def _render_executive_view(df, all_months, cur_month_start):
+    months_closed = [m for m in all_months if pd.Timestamp(m) < cur_month_start]
+    if len(months_closed) < 2:
+        st.info("Not enough closed months for the executive view.")
+        return
+    asof, prev = months_closed[-1], months_closed[-2]
+    asof_lbl = pd.Timestamp(asof).strftime("%b %Y")
+
+    def val(region, col, m):
+        r = df[(df["country"] == region) & (df["month_end"] == m)]
+        if r.empty or col not in r.columns:
+            return None
+        try:
+            v = float(r[col].iloc[0])
+            return None if math.isnan(v) else v
+        except Exception:
+            return None
+
+    def delta(region, col):
+        a, b = val(region, col, asof), val(region, col, prev)
+        return (a - b) if (a is not None and b is not None) else None
+
+    def arrow_html(dv, kind, up_good):
+        if dv is None:
+            return '<span class="kpi-d-na">-</span>'
+        good = (dv >= 0) if up_good else (dv <= 0)
+        cls = "kpi-d-up" if good else "kpi-d-dn"
+        ar = "&#9650;" if dv >= 0 else "&#9660;"
+        dtxt = f"{dv * 100:+.1f} pp" if kind == "pct" else ("+" if dv >= 0 else "") + fmt(dv, kind)
+        return f'<span class="{cls}">{ar} {dtxt}</span>'
+
+    # ---- headline narrative ----
+    _parts = [f"As of <b>{asof_lbl}</b> (last closed month)"]
+    _na, _dna = val("Middle East", "net_adds", asof), delta("Middle East", "net_adds")
+    if _na is not None:
+        _s = f"ME net adds <b>{fmt(_na, 'num')}</b>"
+        if _dna is not None:
+            _s += f" ({'+' if _dna >= 0 else ''}{fmt(_dna, 'num')} MoM)"
+        _parts.append(_s)
+    _mkts = [(r, val(r, "net_adds", asof)) for r in EXEC_REGIONS[1:]]
+    _mkts = [(r, v) for r, v in _mkts if v is not None]
+    if _mkts:
+        _bst = max(_mkts, key=lambda t: t[1])
+        _wst = min(_mkts, key=lambda t: t[1])
+        _parts.append(f"strongest market: <b>{EXEC_RDISP.get(_bst[0], _bst[0])}</b> ({fmt(_bst[1], 'num')} net adds)")
+        _parts.append(f"weakest: <b>{EXEC_RDISP.get(_wst[0], _wst[0])}</b> ({fmt(_wst[1], 'num')})")
+    insight(" &middot; ".join(_parts))
+
+    # ---- market summary cards ----
+    cards = st.columns(len(EXEC_REGIONS))
+    for region, c in zip(EXEC_REGIONS, cards):
+        with c:
+            with st.container(border=True):
+                st.markdown(f'<p class="kpi-l">{EXEC_RDISP.get(region, region)}</p>',
+                            unsafe_allow_html=True)
+                _v = val(region, "net_adds", asof)
+                st.markdown(f'<p class="kpi-v">{fmt(_v, "num") or "-"} <span style="font-size:0.8rem; '
+                            f'font-weight:600; color:#7C776A;">net adds</span></p>',
+                            unsafe_allow_html=True)
+                st.markdown(arrow_html(delta(region, "net_adds"), "num", True) + " MoM",
+                            unsafe_allow_html=True)
+                _rows = []
+                for lbl, cn, kind in [("NRRA %", "nrra", "pct"), ("Live Sold", "live_sold_rate", "pct"),
+                                      ("Occupancy", "occupancy", "pct")]:
+                    _vv = val(region, cn, asof)
+                    if _vv is not None:
+                        _rows.append(f'{lbl} <b>{fmt(_vv, kind)}</b> {arrow_html(delta(region, cn), kind, True)}')
+                if _rows:
+                    st.markdown('<div style="font-size:0.8rem; color:#4A5548; margin-top:4px;">'
+                                + "<br>".join(_rows) + "</div>", unsafe_allow_html=True)
+
+    # ---- the slide grid: metric x market with MoM arrows ----
+    sec("Scorecard", f"The All Hands metric set - every market at once, {asof_lbl} with MoM direction")
+    _h = ['<div class="exec-wrap"><table class="exec-grid"><tr><th>Metric</th>']
+    for region in EXEC_REGIONS:
+        _h.append(f"<th>{EXEC_RDISP.get(region, region)}</th>")
+    _h.append("</tr>")
+    for gname, items in EXEC_GROUPS:
+        _h.append(f'<tr class="exec-band"><td colspan="{len(EXEC_REGIONS) + 1}">{gname}</td></tr>')
+        for lbl, cn, kind, up_good in items:
+            if cn not in df.columns:
+                continue
+            _h.append(f"<tr><td>{lbl}</td>")
+            for region in EXEC_REGIONS:
+                _v = val(region, cn, asof)
+                _cell = f'<span class="ev">{fmt(_v, kind) if _v is not None else "-"}</span>'
+                _cell += f'<span class="ed">{arrow_html(delta(region, cn), kind, up_good)}</span>'
+                _h.append(f"<td>{_cell}</td>")
+            _h.append("</tr>")
+    _h.append("</table></div>")
+    st.markdown("".join(_h), unsafe_allow_html=True)
+
+    # ---- trend charts on the priority metrics ----
+    go = _go()
+    last_n = months_closed[-6:]
+    xl = [pd.Timestamp(m).strftime("%b %y") for m in last_n]
+    _reg_colors = {"Middle East": NAVY, "UAE": ORANGE, "Saudi Arabia": TEAL, "Kuwait": YELLOW}
+
+    sec("Momentum", "Where the region is heading on the priority metrics - last 6 closed months")
+    e1, e2 = st.columns(2)
+    with e1:
+        fig = go.Figure()
+        for region in EXEC_REGIONS:
+            ys = [val(region, "net_adds", m) for m in last_n]
+            fig.add_trace(go.Bar(x=xl, y=ys, name=EXEC_RDISP.get(region, region),
+                                 marker_color=_reg_colors.get(region, SLATE),
+                                 customdata=[fmt(v, "num") for v in ys],
+                                 hovertemplate="<b>%{fullData.name}</b>: %{customdata}<extra></extra>"))
+        fig.update_layout(barmode="group")
+        _base_layout(fig, "Net Adds by market")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with e2:
+        fig = go.Figure()
+        for region in EXEC_REGIONS:
+            ys = [val(region, "nrra", m) for m in last_n]
+            fig.add_trace(go.Scatter(x=xl, y=ys, mode="lines+markers",
+                                     name=EXEC_RDISP.get(region, region),
+                                     line=dict(color=_reg_colors.get(region, SLATE), width=2.4),
+                                     marker=dict(size=7, color="white",
+                                                 line=dict(color=_reg_colors.get(region, SLATE), width=2)),
+                                     customdata=[fmt(v, "pct") for v in ys],
+                                     hovertemplate="<b>%{fullData.name}</b>: %{customdata}<extra></extra>"))
+        pct_axis(_base_layout(fig, "NRRA % by market"))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    e3, e4 = st.columns(2)
+    with e3:
+        fig = go.Figure()
+        for region in EXEC_REGIONS:
+            ys = [val(region, "live_sold_rate", m) for m in last_n]
+            fig.add_trace(go.Scatter(x=xl, y=ys, mode="lines+markers",
+                                     name=EXEC_RDISP.get(region, region),
+                                     line=dict(color=_reg_colors.get(region, SLATE), width=2.4),
+                                     marker=dict(size=7, color="white",
+                                                 line=dict(color=_reg_colors.get(region, SLATE), width=2)),
+                                     customdata=[fmt(v, "pct") for v in ys],
+                                     hovertemplate="<b>%{fullData.name}</b>: %{customdata}<extra></extra>"))
+        pct_axis(_base_layout(fig, "Live Sold Rate by market"))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with e4:
+        # Clean filled map - no pins: countries shaded by the chosen priority metric.
+        _flat = [(lbl, cn, kind) for _, items in EXEC_GROUPS for (lbl, cn, kind, _) in items
+                 if cn in df.columns]
+        _map_lbls = [lbl for lbl, _, _ in _flat]
+        _msel = st.selectbox("Map metric", _map_lbls,
+                             index=_map_lbls.index("Net Adds") if "Net Adds" in _map_lbls else 0,
+                             key="exec_map_metric")
+        _mcol, _mkind = next((cn, kind) for lbl, cn, kind in _flat if lbl == _msel)
+        snapc = df[(df["month_end"] == asof) & (df["country"].isin(COUNTRY_ISO))].dropna(subset=[_mcol])
+        if snapc.empty:
+            st.info("No data to map.")
+        else:
+            fig = go.Figure(go.Choropleth(
+                locations=[COUNTRY_ISO[c] for c in snapc["country"]],
+                z=snapc[_mcol].astype(float),
+                colorscale=[[0.0, "#EAE7DC"], [1.0, "#21362B"]],
+                marker_line_color="white", marker_line_width=1.4, showscale=False,
+                hovertext=[f"{c}: {fmt(v, _mkind)}" for c, v in zip(snapc["country"], snapc[_mcol])],
+                hoverinfo="text"))
+            fig.add_trace(go.Scattergeo(
+                lat=[COUNTRY_CENTROID[c][0] for c in snapc["country"]],
+                lon=[COUNTRY_CENTROID[c][1] for c in snapc["country"]],
+                text=[f"<b>{EXEC_RDISP.get(c, c)}</b><br>{fmt(v, _mkind)}"
+                      for c, v in zip(snapc["country"], snapc[_mcol])],
+                mode="text", textfont=dict(size=12, color="#21362B"),
+                hoverinfo="skip", showlegend=False))
+            fig.update_geos(fitbounds="locations", visible=False, bgcolor="white",
+                            showcountries=True, countrycolor="#DAD6C8",
+                            showland=True, landcolor="#F8F7F2")
+            fig.update_layout(
+                title=dict(text=f"{_msel} - {asof_lbl}",
+                           font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
+                height=360, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white")
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
 def _render_panel_overview(df, all_months, all_labels, cur_month_start):
     """Existing 'Panel Overview' - filter bar, KPI gauges, KPI cards, Revenue,
     Sales & Churn, Mix, Countries map + comparison, footer. Rendered inside the
     'Panel Overview' tab. Banner and BQ load happen once in main() and are shared
     across tabs, so both are stripped from here."""
+    # ---- view toggle: Executive (all markets, the slides' mental model) vs GM deep dive ----
+    try:
+        view = st.segmented_control("View", ["Executive", "Market deep dive"],
+                                    default="Executive", key="flt_view") or "Executive"
+    except Exception:
+        view = st.radio("View", ["Executive", "Market deep dive"], horizontal=True, key="flt_view")
+    if view == "Executive":
+        _render_executive_view(df, all_months, cur_month_start)
+        return
+
     # ---- top filter bar (pills + period presets); no page title - the browser tab carries the name ----
     FLAG = {"Middle East": "\U0001F30D", "Saudi Arabia": "\U0001F1F8\U0001F1E6",
             "UAE": "\U0001F1E6\U0001F1EA", "Kuwait": "\U0001F1F0\U0001F1FC",
@@ -1070,7 +1295,7 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
                 if _refresh:
                     load_bridge.clear()
                     st.rerun()
-        period = _picker("Period", ["3M", "6M", "12M", "YTD", "All", "Custom"], "All", "flt_period")
+        period = _picker("Period", ["3M", "6M", "12M", "YTD", "All", "Custom"], "12M", "flt_period")
         custom_rng = None
         if period == "Custom":
             _min_d = pd.Timestamp(all_months[0]).to_pydatetime().date().replace(day=1)
