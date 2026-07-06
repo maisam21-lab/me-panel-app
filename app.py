@@ -19,7 +19,7 @@ BRIDGE_TABLE = "css-operations.me_panel_dev_us.me_sales_panel_k_monthly"
 COUNTRIES = ["Middle East", "Saudi Arabia", "UAE", "Kuwait", "Bahrain", "Qatar"]
 # Historical reference only; load_bridge no longer filters by a lower bound so the app
 # matches the Google Sheets panel's full-history view.
-START_MONTH = "2025-01-31"
+START_MONTH = "2023-08-31"   # panel history floor: August 2023 onward
 
 # NAMAA brand palette: deep forest green + cream + terracotta (from the brand banner),
 # with sage / gold / taupe as supporting series colors. Variable names kept generic so the
@@ -180,7 +180,8 @@ def load_bridge() -> pd.DataFrame:
     try:
         query = (
             "SELECT * FROM `" + BRIDGE_TABLE + "` "
-            "WHERE month_end <= LAST_DAY(CURRENT_DATE(), MONTH) "
+            "WHERE month_end >= DATE '" + START_MONTH + "' "
+            "AND month_end <= LAST_DAY(CURRENT_DATE(), MONTH) "
             "ORDER BY month_end, country"
         )
         rows = list(client.query(query).result())
@@ -201,7 +202,7 @@ def load_bridge() -> pd.DataFrame:
     if not df.empty:
         df["month_end"] = pd.to_datetime(df["month_end"])
         end = pd.Timestamp.today().normalize() + pd.offsets.MonthEnd(0)
-        df = df[df["month_end"] <= end]
+        df = df[(df["month_end"] >= pd.Timestamp(START_MONTH)) & (df["month_end"] <= end)]
         df = df.sort_values(["month_end", "country"]).reset_index(drop=True)
     return df
 
@@ -1715,9 +1716,7 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
         if os.path.exists(LOGO_PATH):
             st.image(LOGO_PATH, width=36)
     with fcol2:
-        st.caption("**NAMAA - ME RevOps** | Source: `" + BRIDGE_TABLE + "` - same bridge the "
-                   "Google Sheets panel reads; rebuilt every 12h. Current partial month is "
-                   "dotted/grey and excluded from KPIs.")
+        st.caption("**NAMAA - ME RevOps**")
 
 
 # ---------------------------------------------------------------- main
