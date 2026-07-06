@@ -1305,8 +1305,24 @@ def _render_executive_view(df, all_months, cur_month_start):
     if len(months_closed) < 2:
         st.info("Not enough closed months for the executive view.")
         return
-    asof, prev = months_closed[-1], months_closed[-2]
+    # ---- executive controls: everything below follows these ----
+    _lbls = [pd.Timestamp(m).strftime("%b %Y") for m in months_closed]
+    ec1, ec2 = st.columns([1.6, 3.4], vertical_alignment="bottom")
+    with ec1:
+        _sel_asof = st.selectbox("As of month", list(reversed(_lbls)), index=0, key="exec_asof")
+    _ai = _lbls.index(_sel_asof)
+    asof = months_closed[_ai]
+    prev = months_closed[_ai - 1] if _ai >= 1 else None
     asof_lbl = pd.Timestamp(asof).strftime("%b %Y")
+    with ec2:
+        try:
+            _win_sel = st.segmented_control("Momentum window", ["3M", "6M", "12M"],
+                                            default="6M", key="exec_win") or "6M"
+        except Exception:
+            _win_sel = st.radio("Momentum window", ["3M", "6M", "12M"], index=1,
+                                horizontal=True, key="exec_win")
+    _wn = int(_win_sel[:-1])
+    win_months = months_closed[max(0, _ai - _wn + 1): _ai + 1]
 
     def val(region, col, m):
         r = df[(df["country"] == region) & (df["month_end"] == m)]
@@ -1404,11 +1420,11 @@ def _render_executive_view(df, all_months, cur_month_start):
 
     # ---- trend charts on the priority metrics ----
     go = _go()
-    last_n = months_closed[-6:]
+    last_n = win_months
     xl = [pd.Timestamp(m).strftime("%b %y") for m in last_n]
     _reg_colors = {"Middle East": NAVY, "UAE": ORANGE, "Saudi Arabia": TEAL, "Kuwait": YELLOW}
 
-    sec("Momentum", "Where the region is heading on the priority metrics - last 6 closed months")
+    sec("Momentum", f"Where the region is heading on the priority metrics - {_win_sel} to {asof_lbl}")
     e1, e2 = st.columns(2)
     with e1:
         fig = go.Figure()
