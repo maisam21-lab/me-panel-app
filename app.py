@@ -614,6 +614,33 @@ def _brand_slide(slide, prs, *, slide_number=None):
         r.font.color.rgb = RGBColor(0x21, 0x36, 0x2B)
 
 
+def _pptx_table_no_grid(table):
+    """Kill PowerPoint's default table chrome (banding + the vertical gridlines):
+    swap the table style to the built-in 'No Style, No Grid' and disable banding."""
+    from pptx.oxml.ns import qn
+    tbl_el = table._tbl
+    tblPr = tbl_el.tblPr
+    tblPr.set("bandRow", "0")
+    tblPr.set("firstRow", "0")
+    for el in tblPr.findall(qn("a:tableStyleId")):
+        tblPr.remove(el)
+    style_el = tblPr.makeelement(qn("a:tableStyleId"), {})
+    style_el.text = "{5940675A-B579-460E-94D1-54222C63F5DA}"  # No Style, No Grid
+    tblPr.append(style_el)
+
+
+def _pptx_cell_no_vlines(cell):
+    """Belt-and-braces: explicit no-fill left/right borders so no theme can draw verticals."""
+    from pptx.oxml.ns import qn
+    tcPr = cell._tc.get_or_add_tcPr()
+    for tag in ("a:lnR", "a:lnL"):   # insert lnL last so final order is lnL, lnR (schema order)
+        for el in tcPr.findall(qn(tag)):
+            tcPr.remove(el)
+        ln = tcPr.makeelement(qn(tag), {"w": "0"})
+        ln.append(tcPr.makeelement(qn("a:noFill"), {}))
+        tcPr.insert(0, ln)
+
+
 def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
     """Native-PowerPoint slide with a wide table matching the on-screen scorecard.
     Editable in PowerPoint (not an image). Widescreen 16:9 layout with NAMAA brand chrome."""
@@ -651,6 +678,10 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
 
     tbl_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
     tbl = tbl_shape.table
+    try:
+        _pptx_table_no_grid(tbl)
+    except Exception:
+        pass
 
     label_w = Inches(1.7)
     remaining_in = 12.7 - 1.7
@@ -727,6 +758,14 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
                     pass
             ci += 1
         row_idx += 1
+
+    # Strip vertical borders on every cell (the group-end BOTTOM borders stay).
+    try:
+        for _r in range(n_rows):
+            for _c in range(n_cols):
+                _pptx_cell_no_vlines(tbl.cell(_r, _c))
+    except Exception:
+        pass
 
     buf = BytesIO()
     prs.save(buf)
