@@ -410,6 +410,126 @@ def insight(text_html):
     st.markdown(f'<div class="nm-insight">{text_html}</div>', unsafe_allow_html=True)
 
 
+# ---------------------------------------------------------------- metric explainers
+# How every number is calculated - the honest bridge definitions (same logic that feeds
+# the Google Sheets panel). (calculation, what-to-watch) per bridge column.
+METRIC_INFO = {
+    "cws": ("Contract Wins: distinct kitchen-level deals Closed-Won in the month (one deal = one "
+            "kitchen), excluding member transfers. From Salesforce opportunities by Closed-Won date.",
+            "The global-mart country definition excludes delayed transfers; facility views include them."),
+    "approved_deals": ("Deals in Approved or Closed-Won stage counted by their approval date - built to "
+                       "match the Salesforce Approved Deals report cell-by-cell (excludes Virtual/"
+                       "CloudRetail kitchen types and member transfers).", ""),
+    "cw_duration": ("Average contract length (months) of the month's Closed-Won deals, "
+                    "LF-weighted.", ""),
+    "new_occupied_k": ("Kitchens whose access date falls in the month, excluding member transfers. "
+                       "Same access date the RRX $ row uses.",
+                       "RRX $ includes transfer move-ins; this count does not - so on transfer-heavy "
+                       "months $ can move without the count."),
+    "rra": ("Recognized Recurring Revenue Added as % of the prior month's gross LF base.",
+            "Recognized revenue matures over ~2 months; the live month shows a deal-date fill until "
+            "recognized loads, then switches automatically."),
+    "rrl": ("Recognized Recurring Revenue Lost as % of the prior month's gross LF base. License-Fee "
+            "revenue only.", "Scheduled churns are known ahead - future months can show values."),
+    "nrra": ("NRRA % = RRA % minus RRL %.", ""),
+    "rra_usd": ("Recognized license-fee revenue of the month's Closed Wons (finance basis - same as "
+                "the global panel).", "Live month = deal-date LF until recognized loads (~days after "
+                "month close); numbers can then shift, e.g. Jun 2026 NRRA 111k->83k."),
+    "rrl_usd": ("Recognized license-fee revenue lost to churn (finance basis).",
+                "Backdated churns land retroactively - closed months converge over ~2 months."),
+    "nrra_usd": ("NRRA $ = RRA $ minus RRL $.", "Inherits both parents' recognition timing."),
+    "xrra_usd": ("RRX $: license fees of customers whose ACCESS date falls in the month (gross, "
+                 "deal-date basis - no recognition lag). Transfers included.", ""),
+    "xrrl_usd": ("RRLX $: license fees lost from post-access churns by churn date (pre-access churns "
+                 "excluded).", ""),
+    "nrrx_usd": ("NRRX $ = RRX $ minus RRLX $.", ""),
+    "gross_rr_usd": ("Gross Recurring Revenue: every occupied kitchen's monthly license fee at end of "
+                     "period. Occupied = latest accessed-and-not-churned Closed-Won deal per kitchen; "
+                     "BP facilities included (reconciles with Occupied Kitchens).",
+                     "Deals billed in non-local currency convert at their own currency's rate "
+                     "(e.g. the Delivery Hero GBP kitchens)."),
+    "rr_after_mko_mfo_usd": ("Same occupied-kitchen stock valued at the month's NET fee from the "
+                             "Salesforce revenue schedules: LF minus MKO/MFO, custom, promo and term "
+                             "discounts, with first/last-month proration (Total_MLF basis).",
+                             "Gap vs Gross RR = the total concession load (~14% of gross for ME)."),
+    "tcv_usd": ("Total Contract Value of the month's Closed Wons: monthly LF x contract length "
+                "(x fx at the CW month).", ""),
+    "approved_tcv_usd": ("TCV of Approved deals by approval month: monthly LF x contract length.", ""),
+    "churns_excl_transfers": ("Kitchens churned in the month, transfers netted out (global-mart "
+                              "definition).", ""),
+    "net_adds": ("Net kitchen adds = CWs minus churns (both excl. transfers).", ""),
+    "occupancy": ("Occupied kitchens (global mart) divided by Total Kitchen Numbers - TKN = the "
+                  "account-declared kitchen count summed over LIVE facilities.", ""),
+    "occupied_kitchens": ("Occupied kitchens from the global mart (active closed-won occupant "
+                          "deals).", ""),
+    "total_kitchens": ("TKN: SUM(account total_kitchen_numbers) over live facilities - the shared "
+                       "denominator for Occupancy and the Live sold rates.", ""),
+    "live_sold_rate": ("(Sold + Occupied + Churning kitchen statuses at LIVE facilities, BP included) "
+                       "divided by TKN. Statuses are today's Salesforce snapshot.",
+                       "SF keeps no kitchen-status history, so deep history is approximate; always >= "
+                       "Occupancy by construction."),
+    "live_sold_rate_approved": ("Live Sold Rate plus vacant kitchens carrying a still-pending Approved "
+                                "deal (point-in-time pipeline: counted from approval until the deal "
+                                "wins or dies).", "A pipeline stock - it does not tie to the monthly "
+                                "Approved Deals report count."),
+    "live_vacant_appr_k": ("Vacant kitchens at live facilities with a still-pending Approved deal as "
+                           "of month-end (cumulative carry, drops when the deal closes).", ""),
+    "sold_rate_all": ("Sold kitchens / all kitchens across all facilities (live + future).", ""),
+    "net_sold_approved_rate": ("(Net sold + open approved pipeline) / all-facilities kitchens - same "
+                               "denominator as Sold Rate All; the gap is the approved pipeline.", ""),
+    "all_facilities": ("Count of owned sites (live + non-live facilities).", ""),
+    "sales_team_size": ("In-seat AEs (weighted FTEs) - the Jad-locked productivity denominator.", ""),
+    "sales_team_cw_productivity": ("CWs divided by in-seat sales team size.", ""),
+    "aes": ("Account Executives (weighted headcount).", ""),
+    "sdrs": ("SDRs (weighted headcount).", ""),
+}
+
+
+def _behavior_html(dd, col, kind, closed_idx):
+    """'How this number is behaving': latest, MoM, 3-mo average, window high/low."""
+    try:
+        s = pd.to_numeric(dd[col].iloc[: closed_idx + 1], errors="coerce")
+        labs = dd["month_label"].iloc[: closed_idx + 1]
+        mask = s.notna()
+        s, labs = s[mask].reset_index(drop=True), labs[mask].reset_index(drop=True)
+        if s.empty:
+            return ""
+        parts = [f"latest <b>{fmt(s.iloc[-1], kind)}</b> ({labs.iloc[-1]})"]
+        if len(s) >= 2:
+            dv = s.iloc[-1] - s.iloc[-2]
+            ar = "&#9650;" if dv >= 0 else "&#9660;"
+            dtxt = f"{dv * 100:+.1f} pp" if kind == "pct" else ("+" if dv >= 0 else "") + fmt(dv, kind)
+            parts.append(f"MoM {ar} {dtxt}")
+        if len(s) >= 3:
+            parts.append(f"3-mo avg {fmt(s.iloc[-3:].mean(), kind)}")
+        pmax, pmin = int(s.values.argmax()), int(s.values.argmin())
+        parts.append(f"high {fmt(s.iloc[pmax], kind)} ({labs.iloc[pmax]})")
+        parts.append(f"low {fmt(s.iloc[pmin], kind)} ({labs.iloc[pmin]})")
+        return " &middot; ".join(parts)
+    except Exception:
+        return ""
+
+
+def _explain_block(label, items, dd, closed_idx):
+    """A popover listing, for each (title, column, kind): the calculation + live behavior."""
+    try:
+        pop = st.popover(label)
+    except Exception:
+        pop = st.expander(label)
+    with pop:
+        for title, col, kind in items:
+            calc, watch = METRIC_INFO.get(col, ("", ""))
+            st.markdown(f"**{title}**")
+            if calc:
+                st.markdown(calc)
+            beh = _behavior_html(dd, col, kind, closed_idx)
+            if beh:
+                st.markdown('<div class="nm-insight">' + beh + "</div>", unsafe_allow_html=True)
+            if watch:
+                st.caption("Watch: " + watch)
+            st.divider()
+
+
 def _chart_with_select(fig, key, config):
     """plotly_chart with click-selection when the Streamlit version supports it."""
     try:
@@ -464,7 +584,7 @@ def spark(series, color=TEAL, height=52):
 
 
 def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=True,
-             delta_label="vs prior"):
+             delta_label="vs prior", explain=None):
     with col:
         with st.container(border=True):
             st.markdown(f'<p class="kpi-l">{label}</p>', unsafe_allow_html=True)
@@ -480,6 +600,18 @@ def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=Tru
             if series is not None and len(series) > 1:
                 st.plotly_chart(spark(series), use_container_width=True,
                                 config={"displayModeBar": False, "staticPlot": True})
+            if explain and (explain[0] or explain[2]):
+                try:
+                    with st.popover("calc & trend", use_container_width=True):
+                        if explain[0]:
+                            st.markdown(explain[0])
+                        if explain[2]:
+                            st.markdown('<div class="nm-insight">' + explain[2] + "</div>",
+                                        unsafe_allow_html=True)
+                        if explain[1]:
+                            st.caption("Watch: " + explain[1])
+                except Exception:
+                    pass
 
 
 def stacked_pct(d, x, buckets, title, closed_idx):
@@ -1178,6 +1310,16 @@ def _render_executive_view(df, all_months, cur_month_start):
     _h.append("</table></div>")
     st.markdown("".join(_h), unsafe_allow_html=True)
 
+    # Per-metric calculation + live behavior (ME series) for everything on the scorecard.
+    dd_me = df[df["country"] == "Middle East"].sort_values("month_end").reset_index(drop=True)
+    if "month_label" not in dd_me.columns:
+        dd_me["month_label"] = dd_me["month_end"].dt.strftime("%b %Y")
+    _ci = max(0, len([m for m in dd_me["month_end"] if pd.Timestamp(m) < cur_month_start]) - 1)
+    _explain_block("How each metric is calculated & behaving (ME)",
+                   [(lbl, cn, kind) for _, items in EXEC_GROUPS
+                    for (lbl, cn, kind, _) in items if cn in df.columns],
+                   dd_me, _ci)
+
     # ---- trend charts on the priority metrics ----
     go = _go()
     last_n = months_closed[-6:]
@@ -1406,16 +1548,17 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             pass
 
     GAUGES = [
-        ("Occupancy", kpi_row.get("occupancy"), kd("occupancy"), NAVY, True),
-        ("Live Sold Rate", kpi_row.get("live_sold_rate"), kd("live_sold_rate"), TEAL, True),
+        ("Occupancy", kpi_row.get("occupancy"), kd("occupancy"), NAVY, True, "occupancy"),
+        ("Live Sold Rate", kpi_row.get("live_sold_rate"), kd("live_sold_rate"), TEAL, True,
+         "live_sold_rate"),
         ("Live Sold Rate w/ Approved", kpi_row.get("live_sold_rate_approved"),
-         kd("live_sold_rate_approved"), ORANGE, True),
+         kd("live_sold_rate_approved"), ORANGE, True, "live_sold_rate_approved"),
         ("Concession Load", conc_now,
          (conc_now - conc_prev) if (conc_now is not None and conc_prev is not None) else None,
-         RED, False),
+         RED, False, "__concession__"),
     ]
     gcols = st.columns(4)
-    for (lbl, val, dv, color, up_good), gcol in zip(GAUGES, gcols):
+    for (lbl, val, dv, color, up_good, gcol_name), gcol in zip(GAUGES, gcols):
         with gcol:
             with st.container(border=True):
                 st.plotly_chart(donut(val, color), use_container_width=True,
@@ -1429,6 +1572,25 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
                     arrow = "&#9650;" if dv >= 0 else "&#9660;"
                     st.markdown(f'<p class="g-dlt"><span class="{cls}">{arrow} {dv * 100:+.1f} pp</span></p>',
                                 unsafe_allow_html=True)
+                # "How is this calculated / behaving" card
+                try:
+                    with st.popover("calc & trend", use_container_width=True):
+                        if gcol_name == "__concession__":
+                            st.markdown("Concession Load = 1 - (RR after MKO/MFO / Gross RR): the "
+                                        "share of gross license fees given away as MKO/MFO, custom, "
+                                        "promo and term discounts (from the SF revenue schedules).")
+                        else:
+                            _calc, _watch = METRIC_INFO.get(gcol_name, ("", ""))
+                            if _calc:
+                                st.markdown(_calc)
+                            _beh = _behavior_html(d, gcol_name, "pct", closed_idx)
+                            if _beh:
+                                st.markdown('<div class="nm-insight">' + _beh + "</div>",
+                                            unsafe_allow_html=True)
+                            if _watch:
+                                st.caption("Watch: " + _watch)
+                except Exception:
+                    pass
 
     # ---- KPI number cards ----
     KPIS = [
@@ -1444,8 +1606,10 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             continue
         dv = kd(col_name)
         dstr = fmt(abs(dv) if dv is not None else None, kind)
+        _calc, _watch = METRIC_INFO.get(col_name, ("", ""))
+        _beh = _behavior_html(d, col_name, kind, closed_idx)
         kpi_card(slot, label, fmt(kpi_row.get(col_name), kind), dv, dstr, kseries(col_name), up_good,
-                 delta_label=delta_label)
+                 delta_label=delta_label, explain=(_calc, _watch, _beh))
 
     go = _go()
 
@@ -1494,6 +1658,10 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
                 add_line(fig, x, d[cn].tolist(), lbl, color, closed_idx, fmt_kind="usd")
         money_axis(_base_layout(fig, "Occupied-kitchen revenue at EoP (gap = concessions)"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    _explain_block("How these revenue numbers are calculated & behaving",
+                   [("RRA $ (recognized)", "rra_usd", "usd"), ("RRL $ (recognized)", "rrl_usd", "usd"),
+                    ("NRRA $", "nrra_usd", "usd"), ("Gross Recurring Revenue $", "gross_rr_usd", "usd"),
+                    ("RR after MKO/MFO $", "rr_after_mko_mfo_usd", "usd")], d, closed_idx)
 
     # ---- Sales & Churn ----
     sec("Sales &amp; Churn", "Deal flow vs attrition, and the contract value behind it")
@@ -1534,6 +1702,11 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
                      fmt_kind="usd")
         money_axis(_base_layout(fig, "TCV vs Approved TCV"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    _explain_block("How these sales numbers are calculated & behaving",
+                   [("CWs", "cws", "num"), ("Approved Deals", "approved_deals", "num"),
+                    ("Churns (excl. transfers)", "churns_excl_transfers", "num"),
+                    ("Net Adds", "net_adds", "num"), ("TCV $", "tcv_usd", "usd"),
+                    ("Approved TCV $", "approved_tcv_usd", "usd")], d, closed_idx)
 
     # ---- Mix (stacked distributions) ----
     sec("Mix", "Who the revenue comes from and how long the contracts run")
@@ -1604,6 +1777,8 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             insight(" &middot; ".join(_parts) + f" &middot; {kpi_row['month_label']}")
     except Exception:
         pass
+    _explain_block(f"How is '{sel_label}' calculated & behaving?",
+                   [(sel_label, sel_col, sel_kind)], d, closed_idx)
 
     m1, m2 = st.columns([3, 2])
     with m1:
