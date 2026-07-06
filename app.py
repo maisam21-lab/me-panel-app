@@ -295,6 +295,27 @@ def _access_gate():
     current = (st.session_state.get("me_user_email") or "").strip().lower()
     if current in allowed:
         return
+    # Auto-identify allowed users - no typing:
+    # 1) Streamlit-authenticated viewer (when the platform knows who you are).
+    try:
+        _u = str(getattr(getattr(st, "user", None), "email", "") or "").strip()
+        if _u and _u.lower() in allowed:
+            st.session_state["me_user_email"] = _u
+            return
+    except Exception:
+        pass
+    # 2) Personalized link: https://<app-url>/?u=name@namaame.com
+    #    Share each person THEIR link once; after that they never see a prompt.
+    try:
+        _qp = st.query_params.get("u", "")
+        if isinstance(_qp, list):
+            _qp = _qp[0] if _qp else ""
+        _qp = str(_qp).strip()
+        if _qp and _qp.lower() in allowed:
+            st.session_state["me_user_email"] = _qp
+            return
+    except Exception:
+        pass
     _b64 = _logo_b64()
     if _b64:
         st.markdown(
