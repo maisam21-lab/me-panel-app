@@ -17,6 +17,8 @@ import streamlit as st
 BQ_PROJECT = "css-operations"
 BRIDGE_TABLE = "css-operations.me_panel_dev_us.me_sales_panel_k_monthly"
 COUNTRIES = ["Middle East", "Saudi Arabia", "UAE", "Kuwait", "Bahrain", "Qatar"]
+# Historical reference only; load_bridge no longer filters by a lower bound so the app
+# matches the Google Sheets panel's full-history view.
 START_MONTH = "2025-01-31"
 
 # NAMAA brand palette: deep forest green + cream + terracotta (from the brand banner),
@@ -153,13 +155,16 @@ def _bq_client():
 
 @st.cache_data(ttl=900, show_spinner="Loading panel data from BigQuery...")
 def load_bridge() -> pd.DataFrame:
+    """Pull the full ME sales panel bridge from BigQuery. We only bound the upper end
+    (LAST_DAY of the current month) so partial future rows do not show; the lower bound
+    is left off so the app returns as many months of history as the bridge holds,
+    matching the Google Sheets panel view."""
     client = _bq_client()
     rows = None
     try:
         query = (
             "SELECT * FROM `" + BRIDGE_TABLE + "` "
-            "WHERE month_end >= DATE '" + START_MONTH + "' "
-            "AND month_end <= LAST_DAY(CURRENT_DATE(), MONTH) "
+            "WHERE month_end <= LAST_DAY(CURRENT_DATE(), MONTH) "
             "ORDER BY month_end, country"
         )
         rows = list(client.query(query).result())
@@ -179,9 +184,8 @@ def load_bridge() -> pd.DataFrame:
     df = pd.DataFrame(out)
     if not df.empty:
         df["month_end"] = pd.to_datetime(df["month_end"])
-        start = pd.Timestamp(START_MONTH)
         end = pd.Timestamp.today().normalize() + pd.offsets.MonthEnd(0)
-        df = df[(df["month_end"] >= start) & (df["month_end"] <= end)]
+        df = df[df["month_end"] <= end]
         df = df.sort_values(["month_end", "country"]).reset_index(drop=True)
     return df
 
