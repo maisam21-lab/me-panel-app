@@ -117,6 +117,10 @@ st.markdown(
     /* NAMAA terracotta line-art, top-right corner (brand banner motif) */
     .nm-motif { position: fixed; top: 36px; right: 0; width: 320px; opacity: 0.9;
                 z-index: 0; pointer-events: none; }
+    /* Auto-insight line under section headers */
+    .nm-insight { background: #FBFAF3; border-left: 3px solid #D97757; border-radius: 8px;
+                  padding: 7px 12px; margin: 2px 0 10px 0; color: #4A5548;
+                  font-size: 0.84rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -320,14 +324,18 @@ def pct_axis(fig):
     return fig
 
 
-def add_line(fig, x, y, name, color, closed_idx, width=2.6, msize=8):
-    """Dot-marker line (reference style); the stretch after the last closed month is dotted."""
+def add_line(fig, x, y, name, color, closed_idx, width=2.6, msize=8, fmt_kind=None):
+    """Dot-marker line (reference style); the stretch after the last closed month is dotted.
+    fmt_kind formats the hover value ($ / % / count) instead of raw floats."""
     go = _go()
     solid_end = min(closed_idx, len(x) - 1)
+    cd = [fmt(v, fmt_kind) for v in y] if fmt_kind else None
+    ht = "<b>%{fullData.name}</b>: %{customdata}<extra></extra>" if fmt_kind else None
     fig.add_trace(go.Scatter(
         x=x[: solid_end + 1], y=y[: solid_end + 1], mode="lines+markers", name=name,
         line=dict(color=color, width=width),
         marker=dict(size=msize, color="white", line=dict(color=color, width=2.5)),
+        customdata=(cd[: solid_end + 1] if cd else None), hovertemplate=ht,
     ))
     if solid_end < len(x) - 1:
         fig.add_trace(go.Scatter(
@@ -338,10 +346,53 @@ def add_line(fig, x, y, name, color, closed_idx, width=2.6, msize=8):
         ))
 
 
-def add_bar(fig, x, y, name, color, closed_idx):
+def add_bar(fig, x, y, name, color, closed_idx, fmt_kind=None):
     go = _go()
     colors = [color if i <= closed_idx else "rgba(148,163,184,0.45)" for i in range(len(x))]
-    fig.add_trace(go.Bar(x=x, y=y, name=name, marker_color=colors))
+    cd = [fmt(v, fmt_kind) for v in y] if fmt_kind else None
+    ht = "<b>%{fullData.name}</b>: %{customdata}<extra></extra>" if fmt_kind else None
+    fig.add_trace(go.Bar(x=x, y=y, name=name, marker_color=colors,
+                         customdata=cd, hovertemplate=ht))
+
+
+def sec(title, subtitle=None):
+    """Section header with an optional inline explainer."""
+    sub = ('<span style="font-weight:600; font-size:0.78rem; color:#7C776A; '
+           'text-transform:none; letter-spacing:0; margin-left:10px;">' + subtitle + "</span>"
+           ) if subtitle else ""
+    st.markdown(f'<p class="sec">{title}{sub}</p>', unsafe_allow_html=True)
+
+
+def insight(text_html):
+    """Auto-computed takeaway line under a section header."""
+    st.markdown(f'<div class="nm-insight">{text_html}</div>', unsafe_allow_html=True)
+
+
+def _chart_with_select(fig, key, config):
+    """plotly_chart with click-selection when the Streamlit version supports it."""
+    try:
+        return st.plotly_chart(fig, use_container_width=True, key=key,
+                               on_select="rerun", config=config)
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, config=config)
+        return None
+
+
+def _clicked_country(ev):
+    """Extract the clicked country from a plotly selection event (customdata carries it)."""
+    try:
+        pts = ev.selection.points
+    except Exception:
+        try:
+            pts = ev["selection"]["points"]
+        except Exception:
+            return None
+    if not pts:
+        return None
+    cd = pts[0].get("customdata")
+    if isinstance(cd, (list, tuple)):
+        cd = cd[0] if cd else None
+    return str(cd) if cd else None
 
 
 def donut(value, color, delta=None, height=168):
@@ -919,6 +970,12 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
     disp = {c: (FLAG.get(c, "") + " " + c).strip() for c in countries}
     rev = {v: k for k, v in disp.items()}
 
+    # Click-to-filter: apply a pending country (from map / bar clicks) BEFORE the Market
+    # picker widget is instantiated (Streamlit forbids changing a widget's state after).
+    _pending = st.session_state.pop("_pending_cty", None)
+    if _pending and _pending in disp:
+        st.session_state["flt_cty"] = disp[_pending]
+
     def _picker(label, options, default, key):
         """Segmented pills with graceful fallback for older Streamlit versions."""
         try:
@@ -1078,14 +1135,40 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
     go = _go()
 
     # ---- Revenue ----
-    st.markdown('<p class="sec">Revenue</p>', unsafe_allow_html=True)
+    def _top_market(col):
+        """Country with the highest value of `col` at the KPI month (ME excluded)."""
+        try:
+            snapc = df[(df["month_end"] == kpi_row["month_end"]) & (df["country"] != "Middle East")]
+            snapc = snapc.dropna(subset=[col])
+            if snapc.empty:
+                return None, None
+            r0 = snapc.loc[snapc[col].astype(float).idxmax()]
+            return r0["country"], float(r0[col])
+        except Exception:
+            return None, None
+
+    sec("Revenue", "Recognized revenue flow and the occupied-kitchen revenue stock")
+    _parts = []
+    _nr, _dnr = kpi_row.get("nrra_usd"), kd("nrra_usd")
+    if _nr is not None:
+        _s = f"NRRA <b>{fmt(_nr, 'usd')}</b> in {kpi_row['month_label']}"
+        if _dnr is not None:
+            _s += f" ({'+' if _dnr >= 0 else '-'}{fmt(abs(_dnr), 'usd')} {delta_label})"
+        _parts.append(_s)
+    _tc, _tv = _top_market("nrra_usd")
+    if _tc:
+        _parts.append(f"top market: <b>{_tc}</b> ({fmt(_tv, 'usd')})")
+    if conc_now is not None:
+        _parts.append(f"concession load <b>{conc_now * 100:.1f}%</b> of gross RR")
+    if _parts:
+        insight(" &middot; ".join(_parts))
     c1, c2 = st.columns(2)
     with c1:
         fig = go.Figure()
         for lbl, cn, color in [("RRA $", "rra_usd", TEAL), ("RRL $", "rrl_usd", RED),
                                ("NRRA $", "nrra_usd", NAVY)]:
             if cn in d.columns:
-                add_line(fig, x, d[cn].tolist(), lbl, color, closed_idx)
+                add_line(fig, x, d[cn].tolist(), lbl, color, closed_idx, fmt_kind="usd")
         money_axis(_base_layout(fig, "Recurring Revenue - added / lost / net"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     with c2:
@@ -1093,35 +1176,76 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
         for lbl, cn, color in [("Gross RR $", "gross_rr_usd", NAVY),
                                ("RR after MKO/MFO $", "rr_after_mko_mfo_usd", ORANGE)]:
             if cn in d.columns:
-                add_line(fig, x, d[cn].tolist(), lbl, color, closed_idx)
+                add_line(fig, x, d[cn].tolist(), lbl, color, closed_idx, fmt_kind="usd")
         money_axis(_base_layout(fig, "Occupied-kitchen revenue at EoP (gap = concessions)"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     # ---- Sales & Churn ----
-    st.markdown('<p class="sec">Sales &amp; Churn</p>', unsafe_allow_html=True)
+    sec("Sales &amp; Churn", "Deal flow vs attrition, and the contract value behind it")
+    _parts = []
+    _cw, _dcw = kpi_row.get("cws"), kd("cws")
+    if _cw is not None:
+        _s = f"<b>{fmt(_cw, 'num')}</b> CWs in {kpi_row['month_label']}"
+        if _dcw is not None:
+            _s += f" ({'+' if _dcw >= 0 else ''}{fmt(_dcw, 'num')} {delta_label})"
+        _parts.append(_s)
+    _tc, _tv = _top_market("cws")
+    if _tc:
+        _parts.append(f"most CWs: <b>{_tc}</b> ({fmt(_tv, 'num')})")
+    _ch = kpi_row.get("churns_excl_transfers")
+    _na = kpi_row.get("net_adds")
+    if _ch is not None and _na is not None:
+        _parts.append(f"churns {fmt(_ch, 'num')} &rarr; net adds <b>{fmt(_na, 'num')}</b>")
+    if _parts:
+        insight(" &middot; ".join(_parts))
     c3, c4 = st.columns(2)
     with c3:
         fig = go.Figure()
         if "cws" in d.columns:
-            add_bar(fig, x, d["cws"].tolist(), "CWs", TEAL, closed_idx)
+            add_bar(fig, x, d["cws"].tolist(), "CWs", TEAL, closed_idx, fmt_kind="num")
         if "approved_deals" in d.columns:
-            add_bar(fig, x, d["approved_deals"].tolist(), "Approved", NAVY, closed_idx)
+            add_bar(fig, x, d["approved_deals"].tolist(), "Approved", NAVY, closed_idx, fmt_kind="num")
         if "churns_excl_transfers" in d.columns:
-            add_bar(fig, x, d["churns_excl_transfers"].tolist(), "Churns", RED, closed_idx)
+            add_bar(fig, x, d["churns_excl_transfers"].tolist(), "Churns", RED, closed_idx, fmt_kind="num")
         _base_layout(fig, "CWs vs Approved vs Churns")
         fig.update_layout(barmode="group")
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     with c4:
         fig = go.Figure()
         if "tcv_usd" in d.columns:
-            add_line(fig, x, d["tcv_usd"].tolist(), "TCV $", NAVY, closed_idx)
+            add_line(fig, x, d["tcv_usd"].tolist(), "TCV $", NAVY, closed_idx, fmt_kind="usd")
         if "approved_tcv_usd" in d.columns:
-            add_line(fig, x, d["approved_tcv_usd"].tolist(), "Approved TCV $", ORANGE, closed_idx)
+            add_line(fig, x, d["approved_tcv_usd"].tolist(), "Approved TCV $", ORANGE, closed_idx,
+                     fmt_kind="usd")
         money_axis(_base_layout(fig, "TCV vs Approved TCV"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     # ---- Mix (stacked distributions) ----
-    st.markdown('<p class="sec">Mix</p>', unsafe_allow_html=True)
+    sec("Mix", "Who the revenue comes from and how long the contracts run")
+    _parts = []
+    _segs = [("Start-ups", "rr_pct_startups"), ("Independents", "rr_pct_independents"),
+             ("Growth", "rr_pct_growth"), ("Enterprise", "rr_pct_enterprise")]
+    try:
+        _seg_vals = [(lbl, float(kpi_row[cn])) for lbl, cn in _segs
+                     if cn in d.columns and pd.notna(kpi_row.get(cn))]
+        if _seg_vals:
+            _bl, _bv = max(_seg_vals, key=lambda t: t[1])
+            _parts.append(f"<b>{_bl}</b> hold {_bv * 100:.0f}% of recurring revenue")
+    except Exception:
+        pass
+    try:
+        _terms = [("&lt;= 6m", "cw_term_lte_6m"), ("7-12m", "cw_term_7_12m"),
+                  ("13-18m", "cw_term_13_18m"), ("19-24m", "cw_term_19_24m"),
+                  ("25-36m", "cw_term_25_36m"), ("&gt; 36m", "cw_term_gt_36m")]
+        _term_vals = [(lbl, float(kpi_row[cn])) for lbl, cn in _terms
+                      if cn in d.columns and pd.notna(kpi_row.get(cn))]
+        if _term_vals:
+            _tl, _tvv = max(_term_vals, key=lambda t: t[1])
+            _parts.append(f"most common CW term: <b>{_tl}</b> ({_tvv * 100:.0f}% of wins)")
+    except Exception:
+        pass
+    if _parts:
+        insight(" &middot; ".join(_parts) + f" &middot; as of {kpi_row['month_label']}")
     c5, c6 = st.columns(2)
     with c5:
         st.plotly_chart(stacked_pct(
@@ -1140,7 +1264,7 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             use_container_width=True, config={"displayModeBar": False})
 
     # ---- Countries (map + comparison) ----
-    st.markdown('<p class="sec">Countries</p>', unsafe_allow_html=True)
+    sec("Countries", "Click a bubble on the map or a bar to focus the whole dashboard on that market")
     labels = [l for (l, c, k) in COMPARE_METRICS if c in df.columns]
     default_lbl = "NRRA $ (net)" if "NRRA $ (net)" in labels else labels[0]
     sel_label = st.selectbox("Metric", labels, index=labels.index(default_lbl))
@@ -1148,6 +1272,23 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
 
     dc = df[(df["month_end"].isin(keep_months)) & (df["country"] != "Middle East")].copy()
     dme = df[(df["month_end"].isin(keep_months)) & (df["country"] == "Middle East")].sort_values("month_end")
+
+    # Leader / laggard takeaway for the chosen metric.
+    try:
+        _snapc = dc[dc["month_end"] == kpi_row["month_end"]].dropna(subset=[sel_col])
+        if not _snapc.empty:
+            _ld = _snapc.loc[_snapc[sel_col].astype(float).idxmax()]
+            _lg = _snapc.loc[_snapc[sel_col].astype(float).idxmin()]
+            _parts = [f"<b>{_ld['country']}</b> leads {sel_label} with {fmt(_ld[sel_col], sel_kind)}",
+                      f"lowest: <b>{_lg['country']}</b> ({fmt(_lg[sel_col], sel_kind)})"]
+            if sel_kind != "pct" and not dme.empty:
+                _mesnap = dme[dme["month_end"] == kpi_row["month_end"]]
+                if not _mesnap.empty and pd.notna(_mesnap[sel_col].iloc[0]) and float(_mesnap[sel_col].iloc[0]):
+                    _parts.append(f"{_ld['country']} = "
+                                  f"<b>{float(_ld[sel_col]) / float(_mesnap[sel_col].iloc[0]) * 100:.0f}%</b> of ME")
+            insight(" &middot; ".join(_parts) + f" &middot; {kpi_row['month_label']}")
+    except Exception:
+        pass
 
     m1, m2 = st.columns([3, 2])
     with m1:
@@ -1192,23 +1333,28 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
                     fig = go.Figure(go.Scattermap(
                         lat=lats, lon=lons, mode="markers+text", marker=mk, text=texts,
                         textposition="top center", textfont=dict(size=12, color="#21362B"),
-                        hoverinfo="text"))
+                        hoverinfo="text", customdata=cts))
                     fig.update_layout(map=map_cfg)
                 except (AttributeError, ValueError):
                     fig = go.Figure(go.Scattermapbox(
                         lat=lats, lon=lons, mode="markers+text", marker=mk, text=texts,
                         textposition="top center", textfont=dict(size=12, color="#21362B"),
-                        hoverinfo="text"))
+                        hoverinfo="text", customdata=cts))
                     fig.update_layout(mapbox=map_cfg)
                 fig.update_layout(
-                    title=dict(text=f"{sel_label} - {_map_month}",
+                    title=dict(text=f"{sel_label} - {_map_month} (click a bubble to focus)",
                                font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
                     height=470, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
                     showlegend=False)
                 fig.add_annotation(text="Powered by Esri", x=1, y=0, xref="paper", yref="paper",
                                    showarrow=False, xanchor="right", yanchor="bottom",
                                    font=dict(size=9, color="#7C776A"))
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                _ev = _chart_with_select(fig, "map_sel",
+                                         {"displayModeBar": False, "scrollZoom": True})
+                _ck = _clicked_country(_ev) if _ev is not None else None
+                if _ck and _ck != sel_country:
+                    st.session_state["_pending_cty"] = _ck
+                    st.rerun()
         except Exception as _map_err:
             st.info("Map unavailable: " + str(_map_err)[:160])
     with m2:
@@ -1217,11 +1363,17 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
             x=snap[sel_col], y=snap["country"], orientation="h",
             marker_color=[COUNTRY_COLORS.get(c, SLATE) for c in snap["country"]],
             text=[fmt(v, sel_kind) for v in snap[sel_col]], textposition="outside",
+            customdata=snap["country"].tolist(),
+            hovertemplate="<b>%{customdata}</b>: %{text}<extra></extra>",
         ))
         _base_layout(fig, f"{sel_label} - {kpi_row['month_label']}", height=470)
         fig.update_xaxes(showticklabels=False)
         fig.update_layout(margin=dict(l=8, r=70, t=44, b=4))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        _ev2 = _chart_with_select(fig, "rank_sel", {"displayModeBar": False})
+        _ck2 = _clicked_country(_ev2) if _ev2 is not None else None
+        if _ck2 and _ck2 != sel_country:
+            st.session_state["_pending_cty"] = _ck2
+            st.rerun()
 
     t1, t2 = st.columns(2)
     with t1:
