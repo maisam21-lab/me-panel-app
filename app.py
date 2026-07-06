@@ -329,6 +329,12 @@ def _access_gate():
     if st.button("Open", type="primary"):
         if email.strip().lower() in allowed:
             st.session_state["me_user_email"] = email.strip()
+            try:
+                # Stamp identity into the URL so refreshes and bookmarks stay signed in
+                # (the ?u= param re-passes the gate automatically on the next session).
+                st.query_params["u"] = email.strip()
+            except Exception:
+                pass
             st.rerun()
         else:
             st.error("This email is not on the allowed list. Ask Maysam to add you.")
