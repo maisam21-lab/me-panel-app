@@ -296,6 +296,17 @@ def _access_gate():
     if current in allowed:
         return
     # Auto-identify allowed users - no typing:
+    # 0) CSS data-apps (internal platform): Okta SSO at the platform level; streamlit_utils
+    #    is only importable inside that environment and returns the verified Okta email.
+    #    Same code elsewhere just hits ImportError and falls through.
+    try:
+        from streamlit_utils import auth as _css_auth
+        _u = str(_css_auth.get_user_email() or "").strip()
+        if _u and _u.lower() in allowed:
+            st.session_state["me_user_email"] = _u
+            return
+    except Exception:
+        pass
     # 1) Streamlit-authenticated viewer (when the platform knows who you are).
     try:
         _u = str(getattr(getattr(st, "user", None), "email", "") or "").strip()
