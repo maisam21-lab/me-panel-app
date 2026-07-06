@@ -560,6 +560,47 @@ def _pptx_style_cell(cell, *, bold=False, size=10, align="left", color=(0x21, 0x
         cell.fill.fore_color.rgb = RGBColor(*fill)
 
 
+def _pptx_clear_table_style(tbl):
+    """Strip PowerPoint's default table style off a python-pptx table so the theme's
+    Medium Style (blue banded rows, blue header, grid borders) does not paint over
+    our explicit cell fills and borders. Sets the tableStyleId to the 'no style, no
+    grid' preset and turns off first-row / banded-row / etc. flags on tblPr."""
+    from lxml import etree
+    ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    tblPr = tbl._tbl.tblPr
+    for old in tblPr.findall(f"{{{ns_a}}}tableStyleId"):
+        tblPr.remove(old)
+    style_id = etree.SubElement(tblPr, f"{{{ns_a}}}tableStyleId")
+    style_id.text = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}"  # No Style, No Grid
+    for attr in ("firstRow", "firstCol", "lastRow", "lastCol", "bandRow", "bandCol"):
+        tblPr.attrib.pop(attr, None)
+
+
+def _pptx_remove_cell_borders(cell):
+    """Explicitly turn off left/right/top/bottom borders on a table cell so the
+    inherited table style doesn't draw grid lines. Bottom-border helper below is
+    then free to add a single visible line where we want the group-end rule."""
+    from lxml import etree
+    ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    tc = cell._tc
+    tcPr = tc.find(f"{{{ns_a}}}tcPr")
+    if tcPr is None:
+        tcPr = etree.SubElement(tc, f"{{{ns_a}}}tcPr")
+    for side in ("lnL", "lnR", "lnT", "lnB"):
+        for old in tcPr.findall(f"{{{ns_a}}}{side}"):
+            tcPr.remove(old)
+        ln = etree.SubElement(tcPr, f"{{{ns_a}}}{side}")
+        ln.set("w", "6350")
+        etree.SubElement(ln, f"{{{ns_a}}}noFill")
+
+
+def _pptx_cell_fill(cell, rgb):
+    """Solid fill on a python-pptx table cell."""
+    from pptx.dml.color import RGBColor
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = RGBColor(*rgb)
+
+
 def _pptx_cell_bottom_border(cell, *, color_hex="B7B0A0", width_emu=6350):
     """Add a bottom border to a python-pptx table cell. python-pptx has no first-class
     cell-border API, so we build the OOXML fragment (a:lnB) directly on the cell's tcPr."""
@@ -729,28 +770,39 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
 
     tbl_shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
     tbl = tbl_shape.table
+    # Strip PowerPoint's default table style so the theme doesn't paint blue banded
+    # rows and grid borders over our explicit cell fills.
     try:
-        _pptx_table_no_grid(tbl)
+        _pptx_clear_table_style(tbl)
+    except Exception:
+        pass
+    try:
+        _pptx_table_no_grid(tbl)  # legacy no-op helper — keep alongside for older PPT viewers
     except Exception:
         pass
 
-    label_w = Inches(1.7)
-    remaining_in = 12.7 - 1.7
-    per_region_in = remaining_in / n_regions
-    month_in = per_region_in * 0.28
-    mom_in = per_region_in - month_in * 3
-    tbl.columns[0].width = label_w
+    # Column widths: widen the MoM column so "MoM Δ" and values like "-6.9%" fit on one line.
+    label_w_in = 1.4
+    month_w_in = 0.58
+    mom_w_in = 1.00
+    tbl.columns[0].width = Inches(label_w_in)
     ci = 1
     for _ in SCORECARD_REGIONS:
         for _ in range(3):
-            tbl.columns[ci].width = Inches(month_in)
+            tbl.columns[ci].width = Inches(month_w_in)
             ci += 1
-        tbl.columns[ci].width = Inches(mom_in)
+        tbl.columns[ci].width = Inches(mom_w_in)
         ci += 1
 
-    # Row 0: region banner (merged across the 4 cols per region)
+    cream_bg = (0xEE, 0xED, 0xE5)
+    body_bg = (0xF5, 0xF1, 0xE7)
+    banner_bg = (0x21, 0x36, 0x2B)
+
+    # Row 0: region banner (merged across the 4 cols per region), transparent cream fill.
     tbl.cell(0, 0).text = ""
     _pptx_style_cell(tbl.cell(0, 0), size=10)
+    _pptx_cell_fill(tbl.cell(0, 0), cream_bg)
+    _pptx_remove_cell_borders(tbl.cell(0, 0))
     for r_i, region in enumerate(SCORECARD_REGIONS):
         c0 = 1 + r_i * 4
         c1 = c0 + 3
@@ -758,20 +810,26 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
         tbl.cell(0, c0).text = SCORECARD_REGION_DISPLAY.get(region, region)
         _pptx_style_cell(tbl.cell(0, c0), bold=True, size=13, align="center",
                          color=(0x21, 0x36, 0x2B))
+        _pptx_cell_fill(tbl.cell(0, c0), cream_bg)
+        _pptx_remove_cell_borders(tbl.cell(0, c0))
 
-    # Row 1: month subheaders + MoM Δ, dark green banner
+    # Row 1: month subheaders + MoM Δ, dark green banner, white text.
     tbl.cell(1, 0).text = ""
     _pptx_style_cell(tbl.cell(1, 0), size=9)
+    _pptx_cell_fill(tbl.cell(1, 0), cream_bg)
+    _pptx_remove_cell_borders(tbl.cell(1, 0))
     ci = 1
     for _ in SCORECARD_REGIONS:
         for h in win_hdrs:
             tbl.cell(1, ci).text = h
             _pptx_style_cell(tbl.cell(1, ci), bold=True, size=10, align="center",
-                             fill=(0x21, 0x36, 0x2B), color=(0xFF, 0xFF, 0xFF))
+                             fill=banner_bg, color=(0xFF, 0xFF, 0xFF))
+            _pptx_remove_cell_borders(tbl.cell(1, ci))
             ci += 1
         tbl.cell(1, ci).text = "MoM Δ"
         _pptx_style_cell(tbl.cell(1, ci), bold=True, size=10, align="center",
-                         fill=(0x21, 0x36, 0x2B), color=(0xFF, 0xFF, 0xFF))
+                         fill=banner_bg, color=(0xFF, 0xFF, 0xFF))
+        _pptx_remove_cell_borders(tbl.cell(1, ci))
         ci += 1
 
     up_rgb = (0x16, 0xA3, 0x4A)
@@ -781,27 +839,36 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
     for g in grid:
         if g.get("spacer"):
             continue
+        # Label cell.
         tbl.cell(row_idx, 0).text = g["label"]
         _pptx_style_cell(tbl.cell(row_idx, 0), bold=True, size=10, align="left",
                          color=(0x21, 0x36, 0x2B))
+        _pptx_cell_fill(tbl.cell(row_idx, 0), cream_bg)
+        _pptx_remove_cell_borders(tbl.cell(row_idx, 0))
         ci = 1
         for reg in g["regions"]:
+            # Value cells.
             for v in reg["vals"]:
                 tbl.cell(row_idx, ci).text = fmt(v, g["kind"]) if v is not None else "—"
                 _pptx_style_cell(tbl.cell(row_idx, ci), size=10, align="right",
                                  color=(0x21, 0x36, 0x2B))
+                _pptx_cell_fill(tbl.cell(row_idx, ci), body_bg)
+                _pptx_remove_cell_borders(tbl.cell(row_idx, ci))
                 if g.get("group_end"):
                     try:
                         _pptx_cell_bottom_border(tbl.cell(row_idx, ci))
                     except Exception:
                         pass
                 ci += 1
+            # MoM cell.
             state = reg["state"]
             mom_txt = "—" if reg["mom"] is None else fmt(reg["mom"], g["kind"])
             tbl.cell(row_idx, ci).text = mom_txt
             mom_color = up_rgb if state == "up" else dn_rgb if state == "dn" else flat_rgb
             _pptx_style_cell(tbl.cell(row_idx, ci), bold=True, size=10, align="right",
                              color=mom_color)
+            _pptx_cell_fill(tbl.cell(row_idx, ci), body_bg)
+            _pptx_remove_cell_borders(tbl.cell(row_idx, ci))
             if g.get("group_end"):
                 try:
                     _pptx_cell_bottom_border(tbl.cell(row_idx, ci))
@@ -810,13 +877,10 @@ def _build_scorecard_pptx(title, sel_label, win_hdrs, grid) -> bytes:
             ci += 1
         row_idx += 1
 
-    # Strip vertical borders on every cell (the group-end BOTTOM borders stay).
-    try:
-        for _r in range(n_rows):
-            for _c in range(n_cols):
-                _pptx_cell_no_vlines(tbl.cell(_r, _c))
-    except Exception:
-        pass
+    # Note: cell borders are already stripped inline via _pptx_remove_cell_borders() during
+    # the row loop, and the group-end bottom borders are applied after that on specific rows.
+    # An additional post-loop sweep with the legacy _pptx_cell_no_vlines helper would risk
+    # wiping the group-end bottom border on newer python-pptx versions, so we skip it.
 
     buf = BytesIO()
     prs.save(buf)
