@@ -101,6 +101,10 @@ st.markdown(
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background: #FFFFFF; border: 1px solid #E0DCCE !important; border-radius: 14px;
         box-shadow: 0 2px 6px rgba(33, 54, 43, 0.08);
+        transition: box-shadow 0.15s ease, transform 0.15s ease;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+        box-shadow: 0 6px 16px rgba(33, 54, 43, 0.16); transform: translateY(-1px);
     }
     .kpi-l { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
              color: #7C776A; margin: 0; }
@@ -1307,8 +1311,10 @@ EXEC_GROUPS = [
                      ("Occupancy", "occupancy", "pct", True),
                      ("Occupied kitchens", "occupied_kitchens", "num", True)]),
 ]
-EXEC_REGIONS = ["Middle East", "UAE", "Saudi Arabia", "Kuwait"]
-EXEC_RDISP = {"Saudi Arabia": "KSA", "Middle East": "ME"}
+EXEC_REGIONS = ["Middle East", "UAE", "Saudi Arabia", "Kuwait", "Bahrain", "Qatar"]
+EXEC_RDISP = {"Saudi Arabia": "KSA", "Middle East": "ME", "Bahrain": "BH", "Qatar": "QAT"}
+EXEC_REG_COLORS = {"Middle East": NAVY, "UAE": ORANGE, "Saudi Arabia": TEAL,
+                   "Kuwait": YELLOW, "Bahrain": RED, "Qatar": SLATE}
 
 
 def _render_executive_view(df, all_months, cur_month_start):
@@ -1397,6 +1403,10 @@ def _render_executive_view(df, all_months, cur_month_start):
                 if _rows:
                     st.markdown('<div style="font-size:0.8rem; color:#4A5548; margin-top:4px;">'
                                 + "<br>".join(_rows) + "</div>", unsafe_allow_html=True)
+                if st.button("Deep dive", key=f"exec_dd_{region}", use_container_width=True):
+                    st.session_state["_pending_cty"] = region
+                    st.session_state["_pending_view"] = "Market deep dive"
+                    st.rerun()
 
     # ---- the slide grid: metric x market with MoM arrows ----
     sec("Scorecard", f"The All Hands metric set - every market at once, {asof_lbl} with MoM direction")
@@ -1429,11 +1439,66 @@ def _render_executive_view(df, all_months, cur_month_start):
                     for (lbl, cn, kind, _) in items if cn in df.columns],
                    dd_me, _ci)
 
+    # ---- metric drill-down: tap any scorecard metric to expand it across markets ----
+    sec("Drill-down", "Tap a metric - trend by market, ranking, and how it is calculated")
+    _flatm = [(lbl, cn, kind, ug) for _, items in EXEC_GROUPS
+              for (lbl, cn, kind, ug) in items if cn in df.columns]
+    _dl_lbls = [t[0] for t in _flatm]
+    try:
+        _dsel = st.pills("Metric", _dl_lbls, default="Net Adds" if "Net Adds" in _dl_lbls else _dl_lbls[0],
+                         key="exec_drill") or _dl_lbls[0]
+    except Exception:
+        try:
+            _dsel = st.segmented_control("Metric", _dl_lbls,
+                                         default="Net Adds" if "Net Adds" in _dl_lbls else _dl_lbls[0],
+                                         key="exec_drill") or _dl_lbls[0]
+        except Exception:
+            _dsel = st.selectbox("Metric", _dl_lbls, key="exec_drill")
+    _dlbl, _dcol, _dkind, _dug = next((t for t in _flatm if t[0] == _dsel), _flatm[0])
+    go = _go()
+    dr1, dr2 = st.columns([3, 2])
+    with dr1:
+        fig = go.Figure()
+        for region in EXEC_REGIONS:
+            ys = [val(region, _dcol, m) for m in win_months]
+            fig.add_trace(go.Scatter(
+                x=[pd.Timestamp(m).strftime("%b %y") for m in win_months], y=ys,
+                mode="lines+markers", name=EXEC_RDISP.get(region, region),
+                line=dict(color=EXEC_REG_COLORS.get(region, SLATE), width=2.4),
+                marker=dict(size=7, color="white",
+                            line=dict(color=EXEC_REG_COLORS.get(region, SLATE), width=2)),
+                customdata=[fmt(v, _dkind) for v in ys],
+                hovertemplate="<b>%{fullData.name}</b>: %{customdata}<extra></extra>"))
+        _base_layout(fig, f"{_dlbl} - trend by market", height=360)
+        if _dkind in ("usd", "usdk"):
+            money_axis(fig)
+        elif _dkind == "pct":
+            pct_axis(fig)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with dr2:
+        _rank = [(r, val(r, _dcol, asof)) for r in EXEC_REGIONS[1:]]
+        _rank = sorted([(r, v) for r, v in _rank if v is not None], key=lambda t: t[1])
+        if _rank:
+            fig = go.Figure(go.Bar(
+                x=[v for _, v in _rank], y=[EXEC_RDISP.get(r, r) for r, _ in _rank],
+                orientation="h",
+                marker_color=[EXEC_REG_COLORS.get(r, SLATE) for r, _ in _rank],
+                text=[fmt(v, _dkind) for _, v in _rank], textposition="outside"))
+            _base_layout(fig, f"{_dlbl} - {asof_lbl}", height=360)
+            fig.update_xaxes(showticklabels=False)
+            fig.update_layout(margin=dict(l=8, r=70, t=44, b=4))
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    _calc, _watch = METRIC_INFO.get(_dcol, ("", ""))
+    _beh = _behavior_html(dd_me, _dcol, _dkind, _ci)
+    if _calc or _beh:
+        _txt = (_calc + (" &middot; " if _calc and _beh else "") + _beh) if (_calc or _beh) else ""
+        insight(_txt + ((" &middot; Watch: " + _watch) if _watch else ""))
+
     # ---- trend charts on the priority metrics ----
     go = _go()
     last_n = win_months
     xl = [pd.Timestamp(m).strftime("%b %y") for m in last_n]
-    _reg_colors = {"Middle East": NAVY, "UAE": ORANGE, "Saudi Arabia": TEAL, "Kuwait": YELLOW}
+    _reg_colors = EXEC_REG_COLORS
 
     sec("Momentum", f"Where the region is heading on the priority metrics - {_win_sel} to {asof_lbl}")
     e1, e2 = st.columns(2)
