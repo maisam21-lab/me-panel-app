@@ -105,6 +105,7 @@ st.markdown(
     }
     div[data-testid="stVerticalBlockBorderWrapper"]:hover {
         box-shadow: 0 6px 16px rgba(33, 54, 43, 0.16); transform: translateY(-1px);
+        position: relative; z-index: 60;
     }
     .kpi-l { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
              color: #7C776A; margin: 0; }
@@ -129,7 +130,8 @@ st.markdown(
                   font-size: 0.84rem; }
     /* Executive metric x market grid (mirrors the All Hands slide mental model) */
     .exec-wrap { background: #FFFFFF; border: 1px solid #E0DCCE; border-radius: 14px;
-                 padding: 6px 10px; box-shadow: 0 2px 6px rgba(33,54,43,0.08); overflow-x: auto; }
+                 padding: 6px 10px; box-shadow: 0 2px 6px rgba(33,54,43,0.08); overflow: visible; }
+    @media (max-width: 1100px) { .exec-wrap { overflow-x: auto; } }
     .exec-grid { width: 100%; border-collapse: collapse; }
     .exec-grid th { background: #F0EEE6; color: #21362B; font-size: 0.78rem; font-weight: 800;
                     text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 12px;
@@ -143,6 +145,44 @@ st.markdown(
                                  padding: 5px 12px; border-bottom: none; }
     .exec-grid .ev { font-weight: 800; }
     .exec-grid .ed { font-size: 0.72rem; display: block; margin-top: 1px; }
+    /* Hover info cards: calculation + live behavior appear when hovering any wrapped number */
+    .mi-wrap { position: relative; display: inline-block; cursor: help;
+               border-bottom: 1px dotted rgba(124, 119, 106, 0.55); }
+    .mi-wrap .mi-tip { display: none; position: absolute; top: calc(100% + 8px); left: 0;
+                       width: 320px; max-width: 76vw; background: #21362B; color: #E7E4D8;
+                       border-radius: 10px; padding: 10px 13px; font-size: 0.76rem; font-weight: 400;
+                       line-height: 1.5; text-align: left; text-transform: none;
+                       letter-spacing: normal; white-space: normal; z-index: 10000;
+                       box-shadow: 0 10px 26px rgba(33, 54, 43, 0.4); pointer-events: none; }
+    .mi-wrap:hover .mi-tip { display: block; }
+    .mi-tip .tt { display: block; font-weight: 800; font-size: 0.78rem; color: #FFFFFF;
+                  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+    .mi-tip .tb { display: block; margin-top: 5px; padding-top: 5px;
+                  border-top: 1px solid rgba(238, 237, 229, 0.25); }
+    .mi-tip .tw { display: block; margin-top: 5px; color: #E8B39B; }
+    .mi-tip b { color: #FFFFFF; }
+    .mi-right .mi-tip { left: auto; right: 0; }
+    .mi-up .mi-tip { top: auto; bottom: calc(100% + 8px); }
+    div[data-testid="stMarkdownContainer"] { overflow: visible !important; }
+    /* NAMAA Copilot */
+    .ai-hero { display: flex; align-items: center; gap: 16px; border-radius: 14px;
+               padding: 16px 20px; margin: 4px 0 12px 0; color: #EEEDE5;
+               background: linear-gradient(120deg, #21362B 0%, #2F4A3B 55%, #21362B 100%);
+               box-shadow: 0 4px 14px rgba(33, 54, 43, 0.3); }
+    .ai-spark { font-size: 1.9rem; color: #D97757; line-height: 1; }
+    .ai-t { margin: 0; font-size: 1.15rem; font-weight: 800; letter-spacing: 0.08em;
+            text-transform: uppercase; color: #FFFFFF; }
+    .ai-s { margin: 2px 0 0 0; font-size: 0.82rem; color: #C9D5CC; }
+    .ai-badge { margin-left: auto; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em;
+                text-transform: uppercase; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+    .ai-badge.on { background: rgba(95, 133, 117, 0.35); color: #D6E4DA; border: 1px solid #5F8575; }
+    .ai-badge.off { background: rgba(217, 119, 87, 0.18); color: #E8B39B; border: 1px solid #D97757; }
+    .anom-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 8px 0; }
+    .anom-t { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+              color: #7C776A; margin-right: 4px; }
+    .anom { font-size: 0.74rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+    .anom.warm { background: #F7E8DC; color: #A85A3A; border: 1px solid #D97757; }
+    .anom.hot { background: #F4DCD4; color: #8F3A24; border: 1px solid #B4472E; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -531,6 +571,31 @@ def _behavior_html(dd, col, kind, closed_idx):
         return ""
 
 
+def _metric_tip(label, col, kind, dd, closed_idx, scope=None):
+    """The hover info card body (.mi-tip span): calculation + live behavior + watch."""
+    calc, watch = METRIC_INFO.get(col, ("", ""))
+    beh = _behavior_html(dd, col, kind, closed_idx) if dd is not None else ""
+    if not (calc or beh):
+        return ""
+    head = label + ((" &middot; " + scope) if scope else "")
+    inner = f'<span class="tt">{head}</span>'
+    if calc:
+        inner += calc
+    if beh:
+        inner += f'<span class="tb">{beh}</span>'
+    if watch:
+        inner += f'<span class="tw">Watch: {watch}</span>'
+    return f'<span class="mi-tip">{inner}</span>'
+
+
+def hoverable(visible_html, tip_html, pos=""):
+    """Wrap a value so hovering it shows its info card. pos: '' | 'mi-right' | 'mi-up'."""
+    if not tip_html:
+        return visible_html
+    cls = ("mi-wrap " + pos).strip()
+    return f'<span class="{cls}">{visible_html}{tip_html}</span>'
+
+
 def _explain_block(label, items, dd, closed_idx):
     """A popover listing, for each (title, column, kind): the calculation + live behavior."""
     try:
@@ -685,7 +750,18 @@ def kpi_card(col, label, value_str, delta_val, delta_str, series, up_is_good=Tru
     with col:
         with st.container(border=True):
             st.markdown(f'<p class="kpi-l">{label}</p>', unsafe_allow_html=True)
-            st.markdown(f'<p class="kpi-v">{value_str}</p>', unsafe_allow_html=True)
+            _tip = ""
+            if explain and (explain[0] or explain[2]):
+                _tin = f'<span class="tt">{label}</span>'
+                if explain[0]:
+                    _tin += explain[0]
+                if explain[2]:
+                    _tin += f'<span class="tb">{explain[2]}</span>'
+                if explain[1]:
+                    _tin += f'<span class="tw">Watch: {explain[1]}</span>'
+                _tip = f'<span class="mi-tip">{_tin}</span>'
+            st.markdown(f'<p class="kpi-v">{hoverable(value_str, _tip)}</p>',
+                        unsafe_allow_html=True)
             if delta_val is None:
                 st.markdown('<span class="kpi-d-na">no prior month</span>', unsafe_allow_html=True)
             else:
@@ -1355,6 +1431,21 @@ def _render_executive_view(df, all_months, cur_month_start):
         a, b = val(region, col, asof), val(region, col, prev)
         return (a - b) if (a is not None and b is not None) else None
 
+    _dd_cache = {}
+
+    def _dd_ci(region):
+        """Region series (sorted, labeled) + index of the selected as-of month."""
+        if region not in _dd_cache:
+            d = df[df["country"] == region].sort_values("month_end").reset_index(drop=True)
+            d["month_label"] = d["month_end"].dt.strftime("%b %Y")
+            idx = d.index[d["month_end"] == asof]
+            _dd_cache[region] = (d, int(idx[0]) if len(idx) else max(0, len(d) - 1))
+        return _dd_cache[region]
+
+    def tip(region, label, col, kind):
+        d, ci = _dd_ci(region)
+        return _metric_tip(label, col, kind, d, ci, scope=EXEC_RDISP.get(region, region))
+
     def arrow_html(dv, kind, up_good):
         if dv is None:
             return '<span class="kpi-d-na">-</span>'
@@ -1381,6 +1472,81 @@ def _render_executive_view(df, all_months, cur_month_start):
         _parts.append(f"weakest: <b>{EXEC_RDISP.get(_wst[0], _wst[0])}</b> ({fmt(_wst[1], 'num')})")
     insight(" &middot; ".join(_parts))
 
+    # ---- AI brief + anomaly radar ----
+    _anoms = _anomaly_scan(df, asof, months_closed)
+    _bc1, _bc2 = st.columns([1.6, 4.4], vertical_alignment="center")
+    with _bc1:
+        _gen_brief = st.button(":sparkles: Generate AI brief", key="exec_ai_brief_btn",
+                               use_container_width=True)
+    with _bc2:
+        if _anoms:
+            _chips = []
+            for a in _anoms:
+                _acls = "hot" if abs(a["z"]) >= 3 else "warm"
+                _dt = (f"{a['delta'] * 100:+.1f} pp" if a["kind"] == "pct"
+                       else ("+" if a["delta"] >= 0 else "") + fmt(a["delta"], a["kind"]))
+                _chips.append(f'<span class="anom {_acls}">'
+                              f'{EXEC_RDISP.get(a["region"], a["region"])} &middot; '
+                              f'{a["metric"]} {_dt} (z {a["z"]:+.1f})</span>')
+            st.markdown('<div class="anom-row"><span class="anom-t">Anomaly radar</span>'
+                        + "".join(_chips) + "</div>", unsafe_allow_html=True)
+
+    def _offline_brief():
+        na, dna = val("Middle East", "net_adds", asof), delta("Middle East", "net_adds")
+        L = ["**Headline**",
+             f"ME closed {asof_lbl} at **{fmt(na, 'num') or '-'} net adds**"
+             + (f" ({'+' if dna >= 0 else ''}{fmt(dna, 'num')} MoM)" if dna is not None else "")
+             + ".", "", "**What moved**"]
+        for _lbl, _cn, _k in [("Kitchens sold", "cws", "num"),
+                              ("Kitchens churned", "churns_excl_transfers", "num"),
+                              ("NRRA", "nrra", "pct"), ("Occupancy", "occupancy", "pct")]:
+            _v, _d = val("Middle East", _cn, asof), delta("Middle East", _cn)
+            if _v is None:
+                continue
+            _s = f"- {_lbl}: **{fmt(_v, _k)}**"
+            if _d is not None:
+                _s += (f" ({_d * 100:+.1f} pp MoM)" if _k == "pct"
+                       else f" ({'+' if _d >= 0 else ''}{fmt(_d, _k)} MoM)")
+            L.append(_s)
+        if _mkts:
+            L.append(f"- Strongest market {EXEC_RDISP.get(_bst[0], _bst[0])}"
+                     f" ({fmt(_bst[1], 'num')} net adds); weakest {EXEC_RDISP.get(_wst[0], _wst[0])}"
+                     f" ({fmt(_wst[1], 'num')}).")
+        if _anoms:
+            L += ["", "**Watch-outs**"]
+            L += [f"- {EXEC_RDISP.get(a['region'], a['region'])} {a['metric']}: unusually large "
+                  f"move this month (z {a['z']:+.1f})." for a in _anoms[:3]]
+        return "\n".join(L)
+
+    _bk = "exec_brief_" + asof_lbl + "_" + _win_sel
+    if _gen_brief:
+        with st.spinner("Writing the brief..."):
+            _btxt = None
+            if _ai_key():
+                try:
+                    _bprompt = (
+                        f"Write the executive brief for {asof_lbl} for the Middle East business. "
+                        "Sections: **Headline** (one sentence), **What moved** (3-5 bullets with "
+                        "numbers, naming markets), **Watch-outs** (2-3 bullets), **Do next** (2 "
+                        "bullets). Maximum 180 words. No chart block."
+                        + (" Known anomalies: " + "; ".join(
+                            f"{a['region']} {a['metric']} z {a['z']:+.1f}" for a in _anoms)
+                           if _anoms else ""))
+                    _braw = "".join(_claude_stream(
+                        [{"role": "user", "content": _bprompt}],
+                        _ai_system(df, cur_month_start)))
+                    _btxt, _ = _split_ai_answer(_braw)
+                except Exception as _be:
+                    st.caption("Claude call failed (" + str(_be)[:100] + ") - offline brief below.")
+            if not _btxt:
+                _btxt = _offline_brief()
+            st.session_state[_bk] = _btxt
+    if st.session_state.get(_bk):
+        with st.container(border=True):
+            st.markdown(st.session_state[_bk])
+            st.caption("NAMAA Copilot brief - " + asof_lbl
+                       + (" - Claude" if _ai_key() else " - offline engine"))
+
     # ---- market summary cards ----
     cards = st.columns(len(EXEC_REGIONS))
     for region, c in zip(EXEC_REGIONS, cards):
@@ -1389,8 +1555,12 @@ def _render_executive_view(df, all_months, cur_month_start):
                 st.markdown(f'<p class="kpi-l">{EXEC_RDISP.get(region, region)}</p>',
                             unsafe_allow_html=True)
                 _v = val(region, "net_adds", asof)
-                st.markdown(f'<p class="kpi-v">{fmt(_v, "num") or "-"} <span style="font-size:0.8rem; '
-                            f'font-weight:600; color:#7C776A;">net adds</span></p>',
+                _pos = "mi-right" if region in EXEC_REGIONS[-2:] else ""
+                st.markdown('<p class="kpi-v">'
+                            + hoverable(fmt(_v, "num") or "-",
+                                        tip(region, "Net Adds", "net_adds", "num"), _pos)
+                            + ' <span style="font-size:0.8rem; '
+                            'font-weight:600; color:#7C776A;">net adds</span></p>',
                             unsafe_allow_html=True)
                 st.markdown(arrow_html(delta(region, "net_adds"), "num", True) + " MoM",
                             unsafe_allow_html=True)
@@ -1399,7 +1569,9 @@ def _render_executive_view(df, all_months, cur_month_start):
                                       ("Occupancy", "occupancy", "pct")]:
                     _vv = val(region, cn, asof)
                     if _vv is not None:
-                        _rows.append(f'{lbl} <b>{fmt(_vv, kind)}</b> {arrow_html(delta(region, cn), kind, True)}')
+                        _rows.append(hoverable(f'{lbl} <b>{fmt(_vv, kind)}</b>',
+                                               tip(region, lbl, cn, kind), _pos)
+                                     + f' {arrow_html(delta(region, cn), kind, True)}')
                 if _rows:
                     st.markdown('<div style="font-size:0.8rem; color:#4A5548; margin-top:4px;">'
                                 + "<br>".join(_rows) + "</div>", unsafe_allow_html=True)
@@ -1419,12 +1591,13 @@ def _render_executive_view(df, all_months, cur_month_start):
         for lbl, cn, kind, up_good in items:
             if cn not in df.columns:
                 continue
-            _h.append(f"<tr><td>{lbl}</td>")
+            _h.append(f"<tr><td>{hoverable(lbl, tip('Middle East', lbl, cn, kind))}</td>")
             for region in EXEC_REGIONS:
                 _v = val(region, cn, asof)
                 _cell = f'<span class="ev">{fmt(_v, kind) if _v is not None else "-"}</span>'
                 _cell += f'<span class="ed">{arrow_html(delta(region, cn), kind, up_good)}</span>'
-                _h.append(f"<td>{_cell}</td>")
+                _rpos = "mi-right" if region in EXEC_REGIONS[-3:] else ""
+                _h.append(f"<td>{hoverable(_cell, tip(region, lbl, cn, kind), _rpos)}</td>")
             _h.append("</tr>")
     _h.append("</table></div>")
     st.markdown("".join(_h), unsafe_allow_html=True)
@@ -2045,6 +2218,350 @@ def _render_panel_overview(df, all_months, all_labels, cur_month_start):
         st.caption("**NAMAA - ME RevOps**")
 
 
+# ---------------------------------------------------------------- AI analyst (NAMAA Copilot)
+# Metric ids the copilot can talk about: (label, bridge column, kind, question aliases).
+AI_METRICS = [
+    ("Kitchens sold (CWs)", "cws", "num",
+     ["kitchens sold", "closed won", "closed wons", " cws", " cw ", "sold kitchens"]),
+    ("Approved Deals", "approved_deals", "num", ["approved", "approvals", "pipeline"]),
+    ("Kitchens churned", "churns_excl_transfers", "num", ["churn", "churned", "churns"]),
+    ("Net Adds", "net_adds", "num", ["net adds", "net add", "net growth"]),
+    ("RRA %", "rra", "pct", [" rra"]),
+    ("RRL %", "rrl", "pct", [" rrl", "revenue lost"]),
+    ("NRRA %", "nrra", "pct", ["nrra", "net revenue"]),
+    ("AE Productivity (CWs/AE)", "sales_team_cw_productivity", "num1",
+     ["productivity", "cws/ae", "per ae"]),
+    ("Owned sites", "all_facilities", "num", ["sites", "facilities", "owned"]),
+    ("Live kitchens", "total_kitchens", "num", ["live kitchens", "total kitchens", "capacity"]),
+    ("Occupied kitchens", "occupied_kitchens", "num", ["occupied"]),
+    ("Live Sold %", "live_sold_rate", "pct", ["live sold", "sold rate"]),
+    ("Occupancy %", "occupancy", "pct", ["occupancy", " occ "]),
+    ("Gross RR $", "gross_rr_usd", "usd", ["gross rr", "gross recurring", "rr $"]),
+    ("RR after MKO/MFO $", "rr_after_mko_mfo_usd", "usd",
+     ["after mko", "mko", "mfo", "net rr", "net fee", "concession"]),
+]
+AI_COUNTRY_ALIASES = {
+    "Saudi Arabia": ["saudi", "ksa", "riyadh", "jeddah"],
+    "UAE": ["uae", "emirates", "dubai", "abu dhabi"],
+    "Kuwait": ["kuwait"],
+    "Bahrain": ["bahrain"],
+    "Qatar": ["qatar", "doha"],
+    "Middle East": ["middle east", "region", "overall", "whole business"],
+}
+
+
+def _ai_key():
+    try:
+        return (st.secrets.get("ANTHROPIC_API_KEY", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _ai_model():
+    try:
+        return st.secrets.get("AI_MODEL", "claude-sonnet-4-6") or "claude-sonnet-4-6"
+    except Exception:
+        return "claude-sonnet-4-6"
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _ai_digest(df):
+    """Compact CSV of the whole bridge (per country x month) - the copilot's dataset."""
+    cols = [(cn, kind) for (_l, cn, kind, _a) in AI_METRICS if cn in df.columns]
+    lines = ["month,country," + ",".join(cn for cn, _ in cols)]
+    for _, r in df.sort_values(["country", "month_end"]).iterrows():
+        vals = []
+        for cn, kind in cols:
+            try:
+                v = float(r.get(cn))
+                if pd.isna(v):
+                    vals.append("")
+                elif kind == "pct":
+                    vals.append(f"{v:.4f}")
+                elif kind == "usd":
+                    vals.append(f"{v:.0f}")
+                else:
+                    vals.append(f"{v:g}")
+            except Exception:
+                vals.append("")
+        lines.append(pd.Timestamp(r["month_end"]).strftime("%Y-%m") + ","
+                     + str(r["country"]) + "," + ",".join(vals))
+    return "\n".join(lines)
+
+
+def _ai_glossary():
+    import re as _re
+    out = []
+    for lbl, cn, kind, _a in AI_METRICS:
+        unit = "ratio 0-1" if kind == "pct" else ("USD" if kind == "usd" else "count")
+        calc, _w = METRIC_INFO.get(cn, ("", ""))
+        ln = f"- {cn} ({lbl}, {unit})"
+        if calc:
+            ln += ": " + _re.sub(r"<[^>]+>", "", calc)
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _ai_system(df, cur_month_start):
+    closed = sorted(m for m in df["month_end"].unique() if pd.Timestamp(m) < cur_month_start)
+    last_lbl = pd.Timestamp(closed[-1]).strftime("%b %Y") if closed else "n/a"
+    return (
+        "You are NAMAA Copilot, the AI analyst inside NAMAA's ME Sales Panel (CloudKitchens Middle "
+        "East: UAE, Saudi Arabia, Kuwait, Bahrain, Qatar, plus the Middle East rollup). The last "
+        f"closed month is {last_lbl}; later months are partial and must be flagged as such. Answer "
+        "ONLY from the CSV dataset below - never invent numbers. Percentages are ratios (0.62 = "
+        "62%). Currency is USD. Be crisp and executive: lead with the answer, then 2-4 supporting "
+        "facts naming months. Speak the house language (CWs, RRA, NRRA, Live Sold).\n\n"
+        "METRIC GLOSSARY\n" + _ai_glossary() + "\n\n"
+        "CHART PROTOCOL: when a visual helps, append at the VERY END exactly one fenced block:\n"
+        "```chart\n"
+        '{"metrics": ["occupancy"], "countries": ["Saudi Arabia", "UAE"], "months": 12, '
+        '"type": "line"}\n'
+        "```\n"
+        "metrics = up to 2 column ids from the glossary; countries from: Middle East, UAE, Saudi "
+        "Arabia, Kuwait, Bahrain, Qatar; type: line or bar; months: trailing closed-month window "
+        "(3-36). The app renders it - never mention the block itself.\n\n"
+        "DATASET (monthly, per country)\n" + _ai_digest(df)
+    )
+
+
+def _claude_stream(messages, system):
+    """Stream text deltas from the Anthropic Messages API over SSE (requests only, no SDK)."""
+    import json as _json
+
+    import requests as _rq
+
+    r = _rq.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": _ai_key(), "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"},
+        json={"model": _ai_model(), "max_tokens": 1600, "stream": True,
+              "system": system, "messages": messages},
+        stream=True, timeout=120)
+    if r.status_code != 200:
+        raise RuntimeError(f"API {r.status_code}: {r.text[:200]}")
+    for raw in r.iter_lines(decode_unicode=True):
+        if not raw or not raw.startswith("data:"):
+            continue
+        try:
+            ev = _json.loads(raw[5:].strip())
+        except Exception:
+            continue
+        if ev.get("type") == "content_block_delta":
+            d = ev.get("delta", {})
+            if d.get("type") == "text_delta":
+                yield d.get("text", "")
+
+
+def _split_ai_answer(text):
+    """Separate the visible answer from the trailing ```chart``` spec block."""
+    import json as _json
+    import re as _re
+
+    specs = []
+    m = _re.search(r"```chart\s*(\{.*?\})\s*```", text, _re.S)
+    visible = text
+    if m:
+        visible = (text[:m.start()] + text[m.end():]).strip()
+        try:
+            specs.append(_json.loads(m.group(1)))
+        except Exception:
+            pass
+    return visible, specs
+
+
+def _render_ai_chart(spec, df, cur_month_start):
+    """Draw the chart the copilot asked for - validated against real columns/countries."""
+    try:
+        go = _go()
+        byid = {cn: (lbl, kind) for (lbl, cn, kind, _a) in AI_METRICS}
+        mcols = [c for c in (spec.get("metrics") or []) if c in byid and c in df.columns][:2]
+        if not mcols:
+            return
+        cts = [c for c in (spec.get("countries") or []) if c in EXEC_REGIONS] or ["Middle East"]
+        try:
+            n = max(3, min(int(spec.get("months", 12)), 36))
+        except Exception:
+            n = 12
+        typ = str(spec.get("type", "line")).lower()
+        closed = sorted(m for m in df["month_end"].unique() if pd.Timestamp(m) < cur_month_start)[-n:]
+        fig = go.Figure()
+        for i, cn in enumerate(mcols):
+            lbl, kind = byid[cn]
+            for cty in cts:
+                dd = df[(df["country"] == cty) & (df["month_end"].isin(closed))].sort_values("month_end")
+                if dd.empty:
+                    continue
+                xs = [pd.Timestamp(m).strftime("%b %y") for m in dd["month_end"]]
+                ys = pd.to_numeric(dd[cn], errors="coerce")
+                nm = EXEC_RDISP.get(cty, cty) + (f" - {lbl}" if len(mcols) > 1 else "")
+                color = EXEC_REG_COLORS.get(cty, SLATE)
+                if typ == "bar":
+                    fig.add_trace(go.Bar(x=xs, y=ys, name=nm, marker_color=color))
+                else:
+                    fig.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="lines+markers", name=nm,
+                        line=dict(color=color, width=2.2, dash=("dot" if i else "solid")),
+                        marker=dict(size=6, color="white", line=dict(color=color, width=2))))
+        title = " & ".join(byid[c][0] for c in mcols) + f" - last {len(closed)} closed months"
+        _base_layout(fig, title, height=360)
+        kinds = {byid[c][1] for c in mcols}
+        if kinds == {"pct"}:
+            pct_axis(fig)
+        elif kinds <= {"usd", "usdk"}:
+            money_axis(fig)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    except Exception:
+        pass
+
+
+def _local_ai_answer(q, df, cur_month_start):
+    """Deterministic analyst for when no API key is configured - still answers and charts."""
+    ql = " " + q.lower() + " "
+    hit = next(((lbl, cn, kind) for lbl, cn, kind, als in AI_METRICS
+                if cn in df.columns and any(a in ql for a in als)), None)
+    lbl, cn, kind = hit or ("Net Adds", "net_adds", "num")
+    have = set(df["country"].unique())
+    cts = [c for c, als in AI_COUNTRY_ALIASES.items() if c in have and any(a in ql for a in als)]
+    closed = sorted(m for m in df["month_end"].unique() if pd.Timestamp(m) < cur_month_start)
+    if not closed:
+        return "No closed months in the bridge yet.", []
+    la = closed[-1]
+    pr = closed[-2] if len(closed) > 1 else None
+
+    def gv(cty, m):
+        r = df[(df["country"] == cty) & (df["month_end"] == m)]
+        try:
+            v = float(r[cn].iloc[0])
+            return None if pd.isna(v) else v
+        except Exception:
+            return None
+
+    show = cts or EXEC_REGIONS
+    lines = [f"**{lbl}** as of **{pd.Timestamp(la).strftime('%b %Y')}** (last closed month):", ""]
+    rank = []
+    for cty in show:
+        v = gv(cty, la)
+        if v is None:
+            continue
+        s = f"- **{EXEC_RDISP.get(cty, cty)}**: {fmt(v, kind)}"
+        if pr is not None:
+            p = gv(cty, pr)
+            if p is not None:
+                dv = v - p
+                dtxt = f"{dv * 100:+.1f} pp" if kind == "pct" else ("+" if dv >= 0 else "") + fmt(dv, kind)
+                s += f" ({dtxt} MoM)"
+        lines.append(s)
+        if cty != "Middle East":
+            rank.append((cty, v))
+    if len(rank) > 1:
+        b = max(rank, key=lambda t: t[1])
+        w = min(rank, key=lambda t: t[1])
+        lines += ["", f"Strongest: **{EXEC_RDISP.get(b[0], b[0])}** ({fmt(b[1], kind)}) - "
+                      f"weakest: **{EXEC_RDISP.get(w[0], w[0])}** ({fmt(w[1], kind)})."]
+    lines += ["", "_Offline analyst - add ANTHROPIC_API_KEY to secrets to unlock the full copilot._"]
+    spec = {"metrics": [cn], "countries": (cts or ["Middle East", "Saudi Arabia", "UAE"])[:3],
+            "months": 12, "type": "line"}
+    return "\n".join(lines), [spec]
+
+
+def _anomaly_scan(df, asof, months_closed):
+    """Z-score scan of last MoM moves vs each series' own history - the anomaly radar."""
+    out = []
+    hist = [m for m in months_closed if pd.Timestamp(m) <= pd.Timestamp(asof)][-13:]
+    if len(hist) < 6:
+        return out
+    for lbl, cn, kind, _a in AI_METRICS:
+        if cn not in df.columns:
+            continue
+        for region in EXEC_REGIONS:
+            s = df[(df["country"] == region) & (df["month_end"].isin(hist))].sort_values("month_end")
+            v = pd.to_numeric(s[cn], errors="coerce")
+            if v.notna().sum() < 6:
+                continue
+            d = v.diff().dropna()
+            if len(d) < 5:
+                continue
+            sd = float(d.iloc[:-1].std() or 0)
+            if sd == 0:
+                continue
+            z = (float(d.iloc[-1]) - float(d.iloc[:-1].mean())) / sd
+            if abs(z) >= 2.2:
+                out.append({"region": region, "metric": lbl, "kind": kind,
+                            "z": z, "delta": float(d.iloc[-1])})
+    out.sort(key=lambda a: -abs(a["z"]))
+    return out[:6]
+
+
+def _render_ai_analyst(df, all_months, cur_month_start):
+    """The Copilot tab: streaming chat over the bridge + charts drawn on request."""
+    key_on = bool(_ai_key())
+    st.markdown(
+        '<div class="ai-hero"><div class="ai-spark">&#10022;</div><div>'
+        '<p class="ai-t">NAMAA Copilot</p>'
+        '<p class="ai-s">Ask anything about the ME Sales Panel - it answers with the numbers '
+        'and draws the chart for you.</p></div>'
+        + ('<span class="ai-badge on">Claude connected</span>' if key_on else
+           '<span class="ai-badge off">offline engine</span>')
+        + "</div>", unsafe_allow_html=True)
+
+    if "ai_chat" not in st.session_state:
+        st.session_state["ai_chat"] = []
+
+    suggestions = [
+        "How did KSA occupancy trend over the last 12 months?",
+        "Compare net adds across all markets",
+        "Which market has the best AE productivity?",
+        "Where are churns concentrated?",
+        "How big is the concession load (Gross RR vs after MKO/MFO)?",
+        "Is UAE live sold rate improving?",
+    ]
+    pend = st.session_state.pop("_ai_pending", None)
+    scols = st.columns(3)
+    for i, s in enumerate(suggestions):
+        with scols[i % 3]:
+            if st.button(s, key=f"ai_sug_{i}", use_container_width=True):
+                pend = s
+
+    _avatar = LOGO_PATH if os.path.exists(LOGO_PATH) else None
+    for msg in st.session_state["ai_chat"]:
+        with st.chat_message(msg["role"], avatar=(_avatar if msg["role"] == "assistant" else None)):
+            st.markdown(msg["visible"])
+            for sp in msg.get("specs", []):
+                _render_ai_chart(sp, df, cur_month_start)
+
+    q = st.chat_input("Ask the panel - e.g. 'compare UAE and KSA live sold rate'") or pend
+    if not q:
+        return
+    st.session_state["ai_chat"].append({"role": "user", "visible": q, "raw": q, "specs": []})
+    with st.chat_message("user"):
+        st.markdown(q)
+    with st.chat_message("assistant", avatar=_avatar):
+        ph = st.empty()
+        visible = specs = None
+        raw = ""
+        if key_on:
+            try:
+                msgs = [{"role": m["role"], "content": m["raw"]}
+                        for m in st.session_state["ai_chat"][-9:]]
+                for chunk in _claude_stream(msgs, _ai_system(df, cur_month_start)):
+                    raw += chunk
+                    ph.markdown(raw.split("```chart")[0] + " &#9612;", unsafe_allow_html=True)
+                visible, specs = _split_ai_answer(raw)
+            except Exception as e:
+                st.caption("Claude call failed (" + str(e)[:120] + ") - offline answer below.")
+                visible = None
+        if visible is None:
+            visible, specs = _local_ai_answer(q, df, cur_month_start)
+            raw = visible
+        ph.markdown(visible)
+        for sp in specs:
+            _render_ai_chart(sp, df, cur_month_start)
+    st.session_state["ai_chat"].append(
+        {"role": "assistant", "visible": visible, "raw": raw, "specs": specs})
+    st.session_state["ai_chat"] = st.session_state["ai_chat"][-30:]
+
+
 # ---------------------------------------------------------------- main
 def main():
     """Access gate + load BQ bridge once, then dispatch to three tabs:
@@ -2076,10 +2593,11 @@ def main():
         )
     _inject_motif()
 
-    tab_overview, tab_ck, tab_cr = st.tabs([
+    tab_overview, tab_ck, tab_cr, tab_ai = st.tabs([
         "Panel Overview",
         "ME All Hands Slides",
         "CR ME All Hands Slides",
+        ":sparkles: AI Analyst",
     ])
     with tab_overview:
         _render_panel_overview(df, all_months, all_labels, cur_month_start)
@@ -2089,6 +2607,8 @@ def main():
     with tab_cr:
         _render_all_hands_scorecard(df, all_months, CR_SCORECARD_METRICS, "cr",
                                     pptx_title="ME All Hands - Cloud Retail")
+    with tab_ai:
+        _render_ai_analyst(df, all_months, cur_month_start)
 
 
 main()
