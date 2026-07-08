@@ -2622,11 +2622,8 @@ SNAP_FLAG = {"Middle East": "\U0001F30D", "UAE": "\U0001F1E6\U0001F1EA",
 
 
 def _inject_exec_css():
-    """One-time CSS for the v2 executive look (serif numbers, header bar, KPI cards,
-    hover tooltips, terracotta tab underline)."""
-    if st.session_state.get("_exec2_css"):
-        return
-    st.session_state["_exec2_css"] = True
+    """CSS for the v2 executive look. MUST be injected on every run — Streamlit rebuilds the
+    DOM on each rerun, so a once-per-session guard leaves the page unstyled after any click."""
     st.markdown(
         """
         <style>
@@ -3259,6 +3256,7 @@ def _since_badge(vals, idx, up_good, month_labels):
 
 def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months, idx):
     """The green drill-down popover content for one clicked cell."""
+    _inject_drilldown_css()  # dialog renders in its own subtree — restyle it here too
     vals = _exec_series(df, market, col, months)
     labels = [pd.Timestamp(m).strftime("%b %Y") for m in months]
     labels_sh = [pd.Timestamp(m).strftime("%b '%y") for m in months]
@@ -3341,9 +3339,8 @@ def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months
 
 
 def _inject_drilldown_css():
-    if st.session_state.get("_dd_css"):
-        return
-    st.session_state["_dd_css"] = True
+    # Inject every run (see _inject_exec_css note) — a session guard would drop the styling
+    # on the rerun that opens the dialog, exactly when it's needed.
     st.markdown("""<style>
     .dd-head{border-bottom:1px solid #E0DCCE;padding-bottom:10px;margin-bottom:4px;}
     .dd-title{font-family:Georgia,serif;font-size:1.2rem;font-weight:700;color:#21362B;}
