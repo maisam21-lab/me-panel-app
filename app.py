@@ -649,7 +649,9 @@ def gulf_map(cts, vals, kind, title, height=470):
     go = _go()
     gj = _gulf_geojson()
     hover = [f"{c}: {fmt(v, kind)}" for c, v in zip(cts, vals)]
-    labels = [f"<b>{c}</b><br>{fmt(v, kind)}" for c, v in zip(cts, vals)]
+    # Maplibre Scattermap renders label text as PLAIN text (no HTML) — use a real newline,
+    # not <b>/<br>, or the tags show up literally on the map.
+    labels = [f"{c}\n{fmt(v, kind)}" for c, v in zip(cts, vals)]
     lats = [COUNTRY_CENTROID[c][0] for c in cts]
     lons = [COUNTRY_CENTROID[c][1] for c in cts]
     scale = [[0.0, "#E5E9E0"], [0.55, "#5F8575"], [1.0, "#21362B"]]
@@ -662,7 +664,7 @@ def gulf_map(cts, vals, kind, title, height=470):
         tile_url = ("https://static-map-tiles-api.arcgis.com/arcgis/rest/services/"
                     "static-basemap-tiles-service/v1/arcgis/navigation/static/tile/"
                     "{z}/{y}/{x}?token=" + _token)
-        map_cfg = dict(style="white-bg", center=dict(lat=26.0, lon=49.6), zoom=4.3,
+        map_cfg = dict(style="white-bg", center=dict(lat=25.2, lon=48.5), zoom=4.9,
                        layers=[dict(below="traces", sourcetype="raster", source=[tile_url])])
         common = dict(geojson=gj, featureidkey="id",
                       locations=[COUNTRY_ISO[c] for c in cts],
