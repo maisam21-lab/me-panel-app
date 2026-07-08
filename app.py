@@ -2582,6 +2582,28 @@ NEW_KPIS = [
 NEW_HILITE = "Occupancy"
 NEW_CHART_COUNTRIES = ["UAE", "Saudi Arabia", "Kuwait", "Bahrain"]
 
+# Full catalog of metrics the user can put on a card: label -> (bridge col, fmt kind, up_is_good).
+KPI_CATALOG = {
+    "Occupancy":         ("occupancy",        "pct",  True),
+    "Live-Sold Rate":    ("live_sold_rate",   "pct",  True),
+    "Churn Rate":        ("rrl",              "pct",  False),
+    "New CWs":           ("cws",              "num",  True),
+    "Approved Deals":    ("approved_deals",   "num",  True),
+    "Rev. Added":        ("rra_usd",          "kusd", True),
+    "Net Rev. Added":    ("nrra_usd",         "kusd", True),
+    "Rev. Lost":         ("rrl_usd",          "kusd", False),
+    "Net Adds":          ("net_adds",         "num",  True),
+    "Total Kitchens":    ("total_kitchens",   "num",  True),
+    "Occupied Kitchens": ("occupied_kitchens","num",  True),
+    "Owned Sites":       ("all_facilities",   "num",  True),
+    "Avg CW Duration":   ("cw_duration",      "mo",   True),
+    "RRA %":             ("rra",              "pct",  True),
+    "NRRA %":            ("nrra",             "pct",  True),
+    "Gross RR $":        ("gross_rr_usd",     "kusd", True),
+    "TCV $":             ("tcv_usd",          "kusd", True),
+}
+KPI_DEFAULT_CARDS = [lbl for lbl, *_ in NEW_KPIS]
+
 # Country snapshot table columns: (header, bridge col, format kind, colored, is_bar).
 SNAP_COLS = [
     ("Occupancy",  "occupancy",             "pct",  False, True),
@@ -2633,7 +2655,7 @@ def _inject_exec_css():
             font-family:var(--nm-sans);display:flex;align-items:center;gap:8px;}
 
         /* KPI card strip */
-        .xk-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin:18px 0 6px;}
+        .xk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin:14px 0 6px;}
         .xk{position:relative;background:#FBFAF6;border:1px solid #E0DCCE;border-radius:14px;
             padding:15px 16px 13px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;}
         .xk.hi{background:#21362B;border-color:#21362B;}
@@ -2648,6 +2670,28 @@ def _inject_exec_css():
         .xk-dl{font-family:var(--nm-sans);font-size:.72rem;font-weight:600;color:#7C776A;display:flex;align-items:center;gap:5px;}
         .xk-dl .up{color:#3F7A52;font-weight:700;}.xk-dl .dn{color:#B4472E;font-weight:700;}
         .xk-spark{margin-top:11px;display:block;}
+        /* --- smart + animated cards --- */
+        .xk{animation:xk-rise .55s cubic-bezier(.2,.75,.3,1) both;transition:transform .16s,box-shadow .16s;}
+        .xk:hover{transform:translateY(-3px);box-shadow:0 12px 28px rgba(33,54,43,.15);}
+        @keyframes xk-rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+        .xk:nth-child(1){animation-delay:.00s}.xk:nth-child(2){animation-delay:.05s}
+        .xk:nth-child(3){animation-delay:.10s}.xk:nth-child(4){animation-delay:.15s}
+        .xk:nth-child(5){animation-delay:.20s}.xk:nth-child(6){animation-delay:.25s}
+        .xk:nth-child(7){animation-delay:.30s}.xk:nth-child(8){animation-delay:.35s}
+        .xk-dot{position:absolute;top:14px;right:15px;width:9px;height:9px;border-radius:50%;}
+        .xk-dot.g{background:#3F7A52;box-shadow:0 0 0 4px rgba(63,122,82,.16);}
+        .xk-dot.a{background:#C2A14D;box-shadow:0 0 0 4px rgba(194,161,77,.16);}
+        .xk-dot.r{background:#B4472E;box-shadow:0 0 0 4px rgba(180,71,46,.16);}
+        .xk.hi .xk-dot.g{box-shadow:0 0 0 4px rgba(127,209,166,.22);}
+        .xk-smart{font-family:var(--nm-sans);font-size:.66rem;font-weight:700;margin-top:8px;
+            display:flex;align-items:center;gap:5px;letter-spacing:.01em;}
+        .xk-smart .g{color:#3F7A52;}.xk-smart .r{color:#B4472E;}.xk-smart .n{color:#A79E8B;}
+        .xk.hi .xk-smart .g{color:#7FD1A6;}.xk.hi .xk-smart .n{color:#9DB3A6;}
+        .xk-spark polyline{stroke-dasharray:640;stroke-dashoffset:640;
+            animation:xk-draw 1.1s .2s ease-out forwards;}
+        @keyframes xk-draw{to{stroke-dashoffset:0}}
+        @media(prefers-reduced-motion:reduce){
+            .xk{animation:none;}.xk-spark polyline{animation:none;stroke-dashoffset:0;}}
         .xk-tip{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);
             width:230px;background:#21362B;color:#EAF1EC;border-radius:12px;padding:12px 14px;
             font-family:var(--nm-sans);box-shadow:0 12px 34px rgba(33,54,43,.32);
@@ -2935,26 +2979,82 @@ def _render_overview_tab(df, all_months, cur_month_start):
         except Exception:
             return None
 
+    # ---- customizable cards: pick which metrics & which is highlighted ----
+    if "ov_cards" not in st.session_state:
+        st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
+    with st.expander("⚙️ Customize cards", expanded=False):
+        _cc1, _cc2, _cc3 = st.columns([3, 1.3, 1])
+        with _cc1:
+            st.multiselect("Metrics shown as cards", list(KPI_CATALOG.keys()),
+                           key="ov_cards", max_selections=8,
+                           help="Pick up to 8. Order follows the order you select them.")
+        with _cc2:
+            _now = st.session_state.get("ov_cards") or list(KPI_DEFAULT_CARDS)
+            st.selectbox("Highlight", _now or list(KPI_DEFAULT_CARDS), key="ov_hilite")
+        with _cc3:
+            st.write("")
+            st.write("")
+            if st.button("Reset", use_container_width=True, key="ov_cards_reset"):
+                st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
+                st.session_state.pop("ov_hilite", None)
+                st.rerun()
+    chosen = st.session_state.get("ov_cards") or list(KPI_DEFAULT_CARDS)
+    if not chosen:
+        chosen = list(KPI_DEFAULT_CARDS)
+    hilite = st.session_state.get("ov_hilite")
+    if hilite not in chosen:
+        hilite = chosen[0]
+
     cards = []
-    for label, col, kind, up_good in NEW_KPIS:
+    for label in chosen:
+        col, kind, up_good = KPI_CATALOG[label]
         cur = _v(col, asof)
         pv = _v(col, prev)
         yv = _v(col, yoy)
         mom = (cur - pv) if (cur is not None and pv is not None) else None
         yoy_d = (cur - yv) if (cur is not None and yv is not None) else None
-        # face delta = YoY, shown pp for rates / relative-% for counts & revenue
         face_txt, cls, ar = _face_delta(cur, yv, kind, up_good)
-        spark = _spark_svg(_exec_series(df, "Middle East", col, win),
-                           "#fff" if label == NEW_HILITE else "#5F8575")
-        narr = f"{label} across the ME network as of {asof_ts.strftime('%b %Y')}. " \
-               f"MoM {_kdelta_txt(mom, kind)}, YoY {_kdelta_txt(yoy_d, kind)}."
-        hi = " hi" if label == NEW_HILITE else ""
+        # --- smart insight: current vs its trailing average over the window ---
+        _series = _exec_series(df, "Middle East", col, win)
+        _hist = [v for v in _series[:-1] if v is not None]
+        avg = (sum(_hist) / len(_hist)) if _hist else None
+        vs_txt, vs_cls = "no history", "n"
+        vs_good = None
+        if avg is not None and cur is not None:
+            d = cur - avg
+            better = (d >= 0) if up_good else (d <= 0)
+            vs_good = better
+            _mo = len(_hist)
+            arrow = "&#9650;" if d >= 0 else "&#9660;"
+            near = abs(d) < (abs(avg) * 0.005 + 1e-9)
+            if near:
+                vs_txt, vs_cls = f"&#8776; at {_mo}-mo avg", "n"
+            else:
+                vs_txt = f"{arrow} {'above' if d >= 0 else 'below'} {_mo}-mo avg"
+                vs_cls = "g" if better else "r"
+        # health dot: combine YoY face direction with trailing-avg direction
+        _score = 0
+        if cls == "up":
+            _score += 1
+        elif cls == "dn":
+            _score -= 1
+        if vs_good is True:
+            _score += 1
+        elif vs_good is False:
+            _score -= 1
+        dot = "g" if _score > 0 else ("r" if _score < 0 else "a")
+        spark = _spark_svg(_series, "#fff" if label == hilite else "#5F8575")
+        narr = f"{label} across the ME network. MoM {_kdelta_txt(mom, kind)}, " \
+               f"YoY {_kdelta_txt(yoy_d, kind)}. Current is {vs_txt.replace('&#9650;','up').replace('&#9660;','down').replace('&#8776;','~')}."
+        hi = " hi" if label == hilite else ""
         cards.append(
             f'<div class="xk{hi}">'
+            f'<span class="xk-dot {dot}"></span>'
             f'<p class="xk-label">{label}</p>'
             f'<p class="xk-num">{_kfmt(cur, kind)}</p>'
             f'<p class="xk-dl"><span class="{cls}">{ar} {face_txt}</span>'
             f'<span style="color:#A79E8B;font-weight:600"> vs {yoy_lbl}</span></p>'
+            f'<p class="xk-smart"><span class="{vs_cls}">{vs_txt}</span></p>'
             f'{spark}'
             f'<div class="xk-tip">'
             f'<div class="xk-tip-row"><span>MoM vs {prev_lbl}</span><b>{_kdelta_txt(mom, kind)}</b></div>'
