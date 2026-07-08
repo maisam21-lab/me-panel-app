@@ -2562,11 +2562,343 @@ def _render_ai_analyst(df, all_months, cur_month_start):
     st.session_state["ai_chat"] = st.session_state["ai_chat"][-30:]
 
 
+# ================================================================ Executive redesign (v2)
+# Clean "boardroom" overview matching the approved concept: green header bar, a strip of
+# serif-number KPI cards (one highlighted, rich hover tooltip), and per-country line charts.
+# Data comes from the same me_sales_panel_k_monthly bridge; no new columns.
+
+# (label, bridge column, format kind, up_is_good). "mo" = months suffix.
+NEW_KPIS = [
+    ("Occupancy",        "occupancy",        "pct", True),
+    ("Live-Sold Rate",   "live_sold_rate",   "pct", True),
+    ("Churn Rate",       "rrl",              "pct", False),
+    ("Net Adds",         "net_adds",         "num", True),
+    ("Total Kitchens",   "total_kitchens",   "num", True),
+    ("Avg CW Duration",  "cw_duration",      "mo",  True),
+    ("Approved Deals",   "approved_deals",   "num", True),
+]
+NEW_HILITE = "Total Kitchens"
+NEW_CHART_COUNTRIES = ["UAE", "Saudi Arabia", "Kuwait", "Bahrain"]
+
+
+def _inject_exec_css():
+    """One-time CSS for the v2 executive look (serif numbers, header bar, KPI cards,
+    hover tooltips, terracotta tab underline)."""
+    if st.session_state.get("_exec2_css"):
+        return
+    st.session_state["_exec2_css"] = True
+    st.markdown(
+        """
+        <style>
+        /* terracotta active-tab underline + clean tab labels */
+        .stTabs [data-baseweb="tab-list"]{gap:2px;border-bottom:1px solid #E0DCCE;}
+        .stTabs [data-baseweb="tab"]{font-weight:700;color:#7C776A;font-size:0.95rem;}
+        .stTabs [aria-selected="true"]{color:#21362B;}
+        .stTabs [data-baseweb="tab-highlight"]{background-color:#D97757 !important;}
+
+        /* executive header bar */
+        .xh{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,#21362B,#2C4A3B);
+            border-radius:16px;padding:16px 22px;box-shadow:0 8px 30px rgba(33,54,43,.14);
+            position:relative;overflow:hidden;margin-bottom:6px;}
+        .xh::after{content:"";position:absolute;right:-40px;top:-70px;width:300px;height:300px;
+            background:radial-gradient(circle at center,rgba(217,119,87,.30),transparent 62%);pointer-events:none;}
+        .xh img{height:44px;border-radius:9px;}
+        .xh-eyebrow{color:#9DB3A6;font-size:.66rem;font-weight:800;letter-spacing:.22em;text-transform:uppercase;margin:0;}
+        .xh-title{color:#fff;font-size:1.4rem;font-weight:800;letter-spacing:-.01em;margin:2px 0 0;}
+        .xh-right{margin-left:auto;z-index:1;color:#C9D5CC;font-size:.78rem;font-weight:600;
+            display:flex;align-items:center;gap:8px;}
+
+        /* KPI card strip */
+        .xk-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin:18px 0 6px;}
+        .xk{position:relative;background:#FBFAF6;border:1px solid #E0DCCE;border-radius:14px;
+            padding:14px 15px 12px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;}
+        .xk.hi{background:#21362B;border-color:#21362B;}
+        .xk.hi .xk-label,.xk.hi .xk-num,.xk.hi .xk-dl{color:#fff;}
+        .xk.hi{outline:2px solid #D97757;outline-offset:0;}
+        .xk-label{font-size:.66rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7C776A;margin:0;}
+        .xk-num{font-family:Georgia,"Times New Roman",serif;font-size:1.7rem;font-weight:700;
+            color:#21362B;margin:6px 0 4px;line-height:1;letter-spacing:-.01em;}
+        .xk-dl{font-size:.72rem;font-weight:700;color:#7C776A;display:flex;align-items:center;gap:5px;}
+        .xk-dl .up{color:#3F7A52;}.xk-dl .dn{color:#B4472E;}
+        .xk-spark{margin-top:10px;display:block;}
+        .xk-tip{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);
+            width:230px;background:#21362B;color:#EAF1EC;border-radius:12px;padding:12px 14px;
+            box-shadow:0 12px 34px rgba(33,54,43,.32);opacity:0;visibility:hidden;transition:.14s;z-index:50;}
+        .xk:hover .xk-tip{opacity:1;visibility:visible;}
+        .xk-tip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+            border:7px solid transparent;border-top-color:#21362B;}
+        .xk-tip-row{display:flex;justify-content:space-between;font-size:.74rem;margin-bottom:5px;}
+        .xk-tip-row span{color:#9DB3A6;}.xk-tip-row b{font-weight:800;}
+        .xk-tip-txt{font-size:.72rem;color:#C9D5CC;line-height:1.35;margin-top:8px;
+            border-top:1px solid rgba(255,255,255,.12);padding-top:8px;}
+        @media(max-width:1100px){.xk-grid{grid-template-columns:repeat(3,1fr);}}
+        @media(max-width:640px){.xk-grid{grid-template-columns:repeat(2,1fr);}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _kfmt(v, kind):
+    if v is None:
+        return "—"
+    try:
+        v = float(v)
+    except Exception:
+        return "—"
+    if math.isnan(v):
+        return "—"
+    if kind == "pct":
+        return f"{v * 100:.1f}%"
+    if kind == "mo":
+        return f"{v:.0f}mo"
+    if kind == "num":
+        return f"{v:,.0f}"
+    return fmt(v, kind)
+
+
+def _kdelta_txt(v, kind):
+    if v is None:
+        return "—"
+    if kind == "pct":
+        return f"{v * 100:+.2f}pp"
+    if kind == "mo":
+        return f"{v:+.1f}mo"
+    return f"{v:+,.0f}"
+
+
+def _exec_series(df, region, col, months):
+    out = []
+    for m in months:
+        r = df[(df["country"] == region) & (df["month_end"] == m)]
+        if r.empty or col not in r.columns:
+            out.append(None)
+            continue
+        try:
+            x = float(r[col].iloc[0])
+            out.append(None if math.isnan(x) else x)
+        except Exception:
+            out.append(None)
+    return out
+
+
+def _spark_svg(vals, color, w=118, h=30):
+    pts = [v for v in vals if v is not None]
+    if len(pts) < 2:
+        return f'<svg class="xk-spark" width="100%" height="{h}" viewBox="0 0 {w} {h}"></svg>'
+    lo, hi = min(pts), max(pts)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+    coords = []
+    for i, v in enumerate(vals):
+        if v is None:
+            continue
+        px = (i / (n - 1)) * w
+        py = h - ((v - lo) / rng) * (h - 4) - 2
+        coords.append(f"{px:.1f},{py:.1f}")
+    poly = " ".join(coords)
+    return (f'<svg class="xk-spark" width="100%" height="{h}" viewBox="0 0 {w} {h}" preserveAspectRatio="none">'
+            f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{poly}"/></svg>')
+
+
+def _render_exec_header(df, all_months):
+    _inject_exec_css()
+    _b64 = _logo_b64()
+    img = (f'<img src="data:image/jpeg;base64,{_b64}"/>' if _b64 else "")
+    now = pd.Timestamp.now()
+    ts = now.strftime("%b %d, %Y &middot; %I:%M %p")
+    st.markdown(
+        '<div class="xh">' + img +
+        '<div><p class="xh-eyebrow">Executive Sales Panel</p>'
+        '<p class="xh-title">Middle East &mdash; Cloud Kitchen Network</p></div>'
+        '<div class="xh-right">&#8635; Data refreshed: ' + ts + ' UAE</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_overview_tab(df, all_months, cur_month_start):
+    """v2 Overview: 7 serif KPI cards (ME headline, hover MoM/YoY) + occupancy & churn by country."""
+    _inject_exec_css()
+    months_closed = [m for m in all_months if pd.Timestamp(m) < cur_month_start]
+    if len(months_closed) < 2:
+        st.info("Not enough closed months yet.")
+        return
+    asof = months_closed[-1]
+    prev = months_closed[-2]
+    asof_ts = pd.Timestamp(asof)
+    yoy_ts = asof_ts - pd.DateOffset(years=1)
+    yoy = next((m for m in months_closed if pd.Timestamp(m) == yoy_ts), None)
+    yoy_lbl = yoy_ts.strftime("%b '%y")
+    prev_lbl = pd.Timestamp(prev).strftime("%b '%y")
+    win = months_closed[-13:]  # ~1yr sparkline window
+
+    def _v(col, m):
+        if m is None:
+            return None
+        r = df[(df["country"] == "Middle East") & (df["month_end"] == m)]
+        if r.empty or col not in r.columns:
+            return None
+        try:
+            x = float(r[col].iloc[0])
+            return None if math.isnan(x) else x
+        except Exception:
+            return None
+
+    cards = []
+    for label, col, kind, up_good in NEW_KPIS:
+        cur = _v(col, asof)
+        mom = (cur - _v(col, prev)) if (cur is not None and _v(col, prev) is not None) else None
+        yv = _v(col, yoy)
+        yoy_d = (cur - yv) if (cur is not None and yv is not None) else None
+        # face delta = YoY (matches concept "vs Jun '25")
+        face = yoy_d
+        good = None if face is None else ((face >= 0) if up_good else (face <= 0))
+        ar = "" if face is None else ("&#9650;" if face >= 0 else "&#9660;")
+        cls = "" if good is None else ("up" if good else "dn")
+        spark = _spark_svg(_exec_series(df, "Middle East", col, win),
+                           "#fff" if label == NEW_HILITE else "#5F8575")
+        narr = f"{label} for the ME network as of {asof_ts.strftime('%b %Y')}. " \
+               f"MoM {_kdelta_txt(mom, kind)}, YoY {_kdelta_txt(yoy_d, kind)}."
+        hi = " hi" if label == NEW_HILITE else ""
+        cards.append(
+            f'<div class="xk{hi}">'
+            f'<p class="xk-label">{label}</p>'
+            f'<p class="xk-num">{_kfmt(cur, kind)}</p>'
+            f'<p class="xk-dl"><span class="{cls}">{ar} {_kdelta_txt(face, kind)}</span>'
+            f'<span style="color:#A79E8B;font-weight:600"> vs {yoy_lbl}</span></p>'
+            f'{spark}'
+            f'<div class="xk-tip">'
+            f'<div class="xk-tip-row"><span>MoM vs {prev_lbl}</span><b>{_kdelta_txt(mom, kind)}</b></div>'
+            f'<div class="xk-tip-row"><span>YoY vs {yoy_lbl}</span><b>{_kdelta_txt(yoy_d, kind)}</b></div>'
+            f'<div class="xk-tip-txt">{narr}</div>'
+            f'</div></div>'
+        )
+    st.markdown('<div class="xk-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+
+    # ---- country line charts ----
+    go = _go()
+    lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = go.Figure()
+        for cty in NEW_CHART_COUNTRIES:
+            ys = _exec_series(df, cty, "occupancy", months_closed)
+            fig.add_trace(go.Scatter(x=lbls, y=ys, mode="lines", name=EXEC_RDISP.get(cty, cty),
+                                     line=dict(color=COUNTRY_COLORS.get(cty, SLATE), width=2.2),
+                                     connectgaps=True))
+        _base_layout(fig, "Occupancy by Country", height=340)
+        pct_axis(fig)
+        fig.update_layout(hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with c2:
+        fig = go.Figure()
+        for cty in NEW_CHART_COUNTRIES[:3]:
+            ys = _exec_series(df, cty, "rrl", months_closed)
+            fig.add_trace(go.Scatter(x=lbls, y=ys, mode="lines", name=EXEC_RDISP.get(cty, cty),
+                                     line=dict(color=COUNTRY_COLORS.get(cty, SLATE), width=2.2),
+                                     connectgaps=True))
+        fig.add_hline(y=0.05, line=dict(color="#B4472E", width=1.4, dash="dash"),
+                      annotation_text="5% alert", annotation_position="top right",
+                      annotation_font=dict(size=10, color="#B4472E"))
+        _base_layout(fig, "Churn Rate by Country  ·  lower is better", height=340)
+        pct_axis(fig)
+        fig.update_layout(hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.caption(f"KPIs are Middle East aggregate as of **{asof_ts.strftime('%b %Y')}** (last closed month). "
+               f"Hover any card for MoM &amp; YoY. Source: `{BRIDGE_TABLE}`.")
+
+
+def _render_revenue_tab(df, all_months, cur_month_start):
+    """v2 Revenue: recognized RR flow + occupied-kitchen RR stock + RRA $ by country."""
+    _inject_exec_css()
+    months_closed = [m for m in all_months if pd.Timestamp(m) < cur_month_start]
+    if len(months_closed) < 2:
+        st.info("Not enough closed months yet.")
+        return
+    go = _go()
+    lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
+    closed_idx = len(lbls) - 1
+    sec("Recurring Revenue", "Recognized License-Fee revenue added, lost and net (Middle East)")
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = go.Figure()
+        for lbl, col, color in [("RRA $ (added)", "rra_usd", TEAL),
+                                ("RRL $ (lost)", "rrl_usd", RED),
+                                ("NRRA $ (net)", "nrra_usd", NAVY)]:
+            add_line(fig, lbls, _exec_series(df, "Middle East", col, months_closed),
+                     lbl, color, closed_idx, fmt_kind="usd")
+        money_axis(_base_layout(fig, "RR added / lost / net", height=340))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with c2:
+        fig = go.Figure()
+        for lbl, col, color in [("Gross RR $ (EoP)", "gross_rr_usd", NAVY),
+                                ("TCV $", "tcv_usd", YELLOW)]:
+            add_line(fig, lbls, _exec_series(df, "Middle East", col, months_closed),
+                     lbl, color, closed_idx, fmt_kind="usd")
+        money_axis(_base_layout(fig, "Gross RR (stock) & TCV committed", height=340))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    sec("RRA $ by Country", "Recognized revenue added per market")
+    fig = go.Figure()
+    for cty in NEW_CHART_COUNTRIES:
+        add_line(fig, lbls, _exec_series(df, cty, "rra_usd", months_closed),
+                 EXEC_RDISP.get(cty, cty), COUNTRY_COLORS.get(cty, SLATE), closed_idx, fmt_kind="usd")
+    money_axis(_base_layout(fig, "RRA $ — by market", height=360))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _render_operations_tab(df, all_months, cur_month_start):
+    """v2 Operations: sales flow (CWs/Approved/Churns), net adds by country, kitchens & sites."""
+    _inject_exec_css()
+    months_closed = [m for m in all_months if pd.Timestamp(m) < cur_month_start]
+    if len(months_closed) < 2:
+        st.info("Not enough closed months yet.")
+        return
+    go = _go()
+    lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
+    closed_idx = len(lbls) - 1
+    sec("Sales & Churn", "Contract wins, approved deals and churns across the ME network")
+    c1, c2 = st.columns(2)
+    with c1:
+        fig = go.Figure()
+        for lbl, col, color in [("CWs", "cws", TEAL), ("Approved", "approved_deals", NAVY),
+                                ("Churns", "churns_excl_transfers", RED)]:
+            add_bar(fig, lbls, _exec_series(df, "Middle East", col, months_closed),
+                    lbl, color, closed_idx, fmt_kind="num")
+        _base_layout(fig, "CWs · Approved · Churns", height=340)
+        fig.update_layout(barmode="group")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with c2:
+        fig = go.Figure()
+        for cty in NEW_CHART_COUNTRIES:
+            add_line(fig, lbls, _exec_series(df, cty, "net_adds", months_closed),
+                     EXEC_RDISP.get(cty, cty), COUNTRY_COLORS.get(cty, SLATE), closed_idx, fmt_kind="num")
+        _base_layout(fig, "Net Adds by Country", height=340)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    sec("Capacity", "Live kitchens and owned sites (Middle East)")
+    c3, c4 = st.columns(2)
+    with c3:
+        fig = go.Figure()
+        add_line(fig, lbls, _exec_series(df, "Middle East", "total_kitchens", months_closed),
+                 "Live kitchens", NAVY, closed_idx, fmt_kind="num")
+        add_line(fig, lbls, _exec_series(df, "Middle East", "occupied_kitchens", months_closed),
+                 "Occupied kitchens", TEAL, closed_idx, fmt_kind="num")
+        _base_layout(fig, "Kitchens — live vs occupied", height=340)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with c4:
+        fig = go.Figure()
+        add_line(fig, lbls, _exec_series(df, "Middle East", "all_facilities", months_closed),
+                 "Owned sites", ORANGE, closed_idx, fmt_kind="num")
+        _base_layout(fig, "Owned sites", height=340)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
 # ---------------------------------------------------------------- main
 def main():
-    """Access gate + load BQ bridge once, then dispatch to three tabs:
-    Panel Overview (existing dashboard) / ME All Hands Slides (Cloud Kitchens
-    scorecard) / CR ME All Hands Slides (Cloud Retail scorecard)."""
+    """Access gate + load BQ bridge once, then a NAMAA exec header and five tabs:
+    Overview / Revenue / Operations / ME All Hands / CR All Hands."""
     _access_gate()
 
     try:
@@ -2583,32 +2915,27 @@ def main():
     all_labels = [pd.Timestamp(m).strftime("%b %Y") for m in all_months]
     cur_month_start = pd.Timestamp.today().normalize().replace(day=1)
 
-    # Banner persists across all tabs.
-    _b64 = _logo_b64()
-    if _b64:
-        st.markdown(
-            '<div class="nm-banner"><img src="data:image/jpeg;base64,' + _b64 + '"/>'
-            '<div><p class="nm-name">NAMAA</p><p class="nm-sub">ME Sales Panel</p></div></div>',
-            unsafe_allow_html=True,
-        )
-    _inject_motif()
+    _render_exec_header(df, all_months)
 
-    tab_overview, tab_ck, tab_cr, tab_ai = st.tabs([
-        "Panel Overview",
-        "ME All Hands Slides",
-        "CR ME All Hands Slides",
-        ":sparkles: AI Analyst",
+    tab_ov, tab_rev, tab_ops, tab_ck, tab_cr = st.tabs([
+        "Overview",
+        "Revenue",
+        "Operations",
+        "ME All Hands",
+        "CR All Hands",
     ])
-    with tab_overview:
-        _render_panel_overview(df, all_months, all_labels, cur_month_start)
+    with tab_ov:
+        _render_overview_tab(df, all_months, cur_month_start)
+    with tab_rev:
+        _render_revenue_tab(df, all_months, cur_month_start)
+    with tab_ops:
+        _render_operations_tab(df, all_months, cur_month_start)
     with tab_ck:
         _render_all_hands_scorecard(df, all_months, CK_SCORECARD_METRICS, "ck",
                                     pptx_title="ME All Hands - Cloud Kitchens")
     with tab_cr:
         _render_all_hands_scorecard(df, all_months, CR_SCORECARD_METRICS, "cr",
                                     pptx_title="ME All Hands - Cloud Retail")
-    with tab_ai:
-        _render_ai_analyst(df, all_months, cur_month_start)
 
 
 main()
