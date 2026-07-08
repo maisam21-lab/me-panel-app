@@ -2644,6 +2644,12 @@ def _inject_exec_css():
         .stTabs [data-baseweb="tab"]{font-family:var(--nm-sans);font-weight:700;color:#7C776A;font-size:0.95rem;}
         .stTabs [aria-selected="true"]{color:#21362B;}
         .stTabs [data-baseweb="tab-highlight"]{background-color:#D97757 !important;}
+        /* compact on-brand buttons (the per-card "Details" triggers + others) */
+        .stButton>button{font-family:var(--nm-sans);font-weight:700;font-size:.7rem;letter-spacing:.02em;
+            border-radius:9px;border:1px solid #D8D3C4;color:#55604F;background:#F5F1E7;
+            padding:3px 10px;min-height:0;transition:transform .1s,border-color .12s,color .12s;}
+        .stButton>button:hover{border-color:#5F8575;color:#21362B;background:#EEE9DC;}
+        .stButton>button:active{transform:scale(.95);}
 
         /* executive header bar */
         .xh{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,#21362B,#2C4A3B);
@@ -2658,17 +2664,18 @@ def _inject_exec_css():
             font-family:var(--nm-sans);display:flex;align-items:center;gap:8px;}
 
         /* KPI card strip */
-        .xk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin:14px 0 6px;}
-        .xk{position:relative;background:#FBFAF6;border:1px solid #E0DCCE;border-radius:14px;
-            padding:15px 16px 13px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;}
+        .xk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:10px;margin:12px 0 6px;}
+        .xk{position:relative;background:#FBFAF6;border:1px solid #E0DCCE;border-radius:13px;
+            padding:12px 13px 11px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;cursor:pointer;}
+        .xk:active{transform:scale(.975);}
         .xk.hi{background:#21362B;border-color:#21362B;}
         .xk.hi .xk-label{color:#9DB3A6;}
         .xk.hi .xk-num{color:#fff;}
         .xk.hi .xk-dl{color:#C9D5CC;}
-        .xk-label{font-family:var(--nm-sans);font-size:.64rem;font-weight:800;letter-spacing:.08em;
+        .xk-label{font-family:var(--nm-sans);font-size:.6rem;font-weight:800;letter-spacing:.07em;
             text-transform:uppercase;color:#A79E8B;margin:0;}
-        .xk-num{font-family:var(--nm-serif);font-size:2.05rem;font-weight:600;
-            color:#21362B;margin:6px 0 5px;line-height:1;letter-spacing:-.01em;
+        .xk-num{font-family:var(--nm-serif);font-size:1.6rem;font-weight:600;
+            color:#21362B;margin:4px 0 3px;line-height:1;letter-spacing:-.01em;
             font-variant-numeric:lining-nums;}
         .xk-dl{font-family:var(--nm-sans);font-size:.72rem;font-weight:600;color:#7C776A;display:flex;align-items:center;gap:5px;}
         .xk-dl .up{color:#3F7A52;font-weight:700;}.xk-dl .dn{color:#B4472E;font-weight:700;}
@@ -3047,10 +3054,8 @@ def _render_overview_tab(df, all_months, cur_month_start):
             _score -= 1
         dot = "g" if _score > 0 else ("r" if _score < 0 else "a")
         spark = _spark_svg(_series, "#fff" if label == hilite else "#5F8575")
-        narr = f"{label} across the ME network. MoM {_kdelta_txt(mom, kind)}, " \
-               f"YoY {_kdelta_txt(yoy_d, kind)}. Current is {vs_txt.replace('&#9650;','up').replace('&#9660;','down').replace('&#8776;','~')}."
         hi = " hi" if label == hilite else ""
-        cards.append(
+        html = (
             f'<div class="xk{hi}">'
             f'<span class="xk-dot {dot}"></span>'
             f'<p class="xk-label">{label}</p>'
@@ -3058,21 +3063,36 @@ def _render_overview_tab(df, all_months, cur_month_start):
             f'<p class="xk-dl"><span class="{cls}">{ar} {face_txt}</span>'
             f'<span style="color:#A79E8B;font-weight:600"> vs {yoy_lbl}</span></p>'
             f'<p class="xk-smart"><span class="{vs_cls}">{vs_txt}</span></p>'
-            f'{spark}'
-            f'<div class="xk-tip">'
-            f'<div class="xk-tip-row"><span>MoM vs {prev_lbl}</span><b>{_kdelta_txt(mom, kind)}</b></div>'
-            f'<div class="xk-tip-row"><span>YoY vs {yoy_lbl}</span><b>{_kdelta_txt(yoy_d, kind)}</b></div>'
-            f'<div class="xk-tip-txt">{narr}</div>'
-            f'</div></div>'
+            f'{spark}</div>'
         )
-    st.markdown('<div class="xk-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+        cards.append((label, col, kind, up_good, html))
+
+    # Render cards in rows of up to 7 columns; each has a Details button that opens the
+    # shared drill-down popover for that metric (Middle East, at the selected month).
+    st.caption("Click **Details** on any card — or any number in the Scorecard below — for its trend, percentile and comparisons.")
+    _per_row = 7
+    for _s in range(0, len(cards), _per_row):
+        _chunk = cards[_s:_s + _per_row]
+        _ccols = st.columns(len(_chunk))
+        for (label, col, kind, up_good, html), _ccol in zip(_chunk, _ccols):
+            with _ccol:
+                st.markdown(html, unsafe_allow_html=True)
+                if st.button("Details", key=f"ov_kpi_{label}", use_container_width=True):
+                    st.session_state["_ov_dd"] = {
+                        "market": "Middle East", "label": label, "col": col,
+                        "kind": kind, "up_good": up_good, "month": asof,
+                    }
+                    st.session_state.pop("_sc_last_sig", None)
 
     # ---- All-Hands country snapshot ----
     _render_country_snapshot(df, asof)
 
-    # ---- clickable scorecard: every number opens a drill-down ----
+    # ---- clickable scorecard: every number opens the same drill-down ----
     sec("Scorecard", "Click any number for its trend, percentile and comparisons")
     _render_clickable_scorecard(df, months_closed, key_prefix="ov")
+
+    # ---- one shared drill-down dialog (from cards or scorecard) ----
+    _maybe_render_overview_dd(df, months_closed)
 
     # ---- smooth country charts (with rulers + end labels) ----
     c1, c2 = st.columns(2)
@@ -3348,27 +3368,39 @@ def _inject_drilldown_css():
     # Inject every run (see _inject_exec_css note) — a session guard would drop the styling
     # on the rerun that opens the dialog, exactly when it's needed.
     st.markdown("""<style>
-    .dd-head{border-bottom:1px solid #E0DCCE;padding-bottom:10px;margin-bottom:4px;}
+    .dd-head{border-bottom:1px solid #E0DCCE;padding-bottom:10px;margin-bottom:4px;
+        animation:dd-rise .4s both;}
     .dd-title{font-family:var(--nm-serif);font-size:1.2rem;font-weight:700;color:#21362B;}
     .dd-scope{font-size:.8rem;color:#7C776A;font-weight:600;margin-top:2px;}
     .dd-badge2{font-size:.6rem;font-weight:800;letter-spacing:.1em;color:#A79E8B;margin-top:6px;}
-    .dd-value{font-family:var(--nm-serif);font-size:3rem;font-weight:700;color:#21362B;line-height:1;margin:12px 0 8px;}
+    .dd-value{font-family:var(--nm-serif);font-size:3rem;font-weight:700;color:#21362B;line-height:1;
+        margin:12px 0 8px;animation:dd-pop .5s cubic-bezier(.2,.8,.2,1.15) both;transform-origin:left center;}
     .dd-pill{display:inline-block;background:#EAF3EC;color:#3F7A52;font-weight:800;font-size:.8rem;
-        padding:6px 14px;border-radius:999px;border:1px solid #CFE3D4;}
+        padding:6px 14px;border-radius:999px;border:1px solid #CFE3D4;
+        animation:dd-pop .5s .14s cubic-bezier(.2,.8,.2,1.3) both;}
     .dd-pill.g{background:#EAF3EC;color:#3F7A52;}
     .dd-sec{font-size:.64rem;font-weight:800;letter-spacing:.09em;color:#A79E8B;margin:16px 0 4px;}
     .dd-slider{margin:6px 0 4px;}
     .dd-track{position:relative;height:6px;border-radius:4px;background:#E6E2D6;}
     .dd-track>i{position:absolute;top:50%;transform:translate(-50%,-50%);width:20px;height:20px;
-        border-radius:50%;background:#3F7A52;border:3px solid #fff;box-shadow:0 2px 6px rgba(33,54,43,.25);}
+        border-radius:50%;background:#3F7A52;border:3px solid #fff;box-shadow:0 2px 6px rgba(33,54,43,.25);
+        animation:dd-thumb .75s .1s cubic-bezier(.2,.85,.25,1) both;}
     .dd-scale{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:.72rem;color:#7C776A;}
     .dd-scale b{color:#3F7A52;font-weight:800;}
     .dd-cmp-wrap{border-top:1px solid #EEEBE1;margin-top:2px;}
-    .dd-cmp{display:flex;align-items:center;padding:11px 2px;border-bottom:1px solid #EEEBE1;font-size:.86rem;}
+    .dd-cmp{display:flex;align-items:center;padding:11px 2px;border-bottom:1px solid #EEEBE1;font-size:.86rem;
+        animation:dd-rise .45s both;}
+    .dd-cmp:nth-child(1){animation-delay:.06s}.dd-cmp:nth-child(2){animation-delay:.13s}
+    .dd-cmp:nth-child(3){animation-delay:.20s}.dd-cmp:nth-child(4){animation-delay:.27s}
     .dd-cmp>span:first-child{flex:1;color:#55604F;font-weight:600;}
     .dd-cmp-v{font-family:var(--nm-serif);font-weight:700;color:#21362B;width:90px;text-align:right;}
     .dd-cmp-d{width:86px;text-align:right;font-weight:800;font-size:.8rem;}
     .dd-cmp-d.up{color:#3F7A52;}.dd-cmp-d.dn{color:#B4472E;}
+    @keyframes dd-pop{from{opacity:0;transform:scale(.72)}to{opacity:1;transform:none}}
+    @keyframes dd-rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+    @keyframes dd-thumb{from{left:0!important}}
+    @media(prefers-reduced-motion:reduce){
+        .dd-value,.dd-pill,.dd-track>i,.dd-cmp,.dd-head{animation:none!important;}}
     </style>""", unsafe_allow_html=True)
 
 
@@ -3455,15 +3487,53 @@ def _render_clickable_scorecard(df, months_closed, *, key_prefix="ov"):
     if rix is not None and cix is not None and int(cix) >= 1 and int(rix) < len(metrics):
         label, col, kind, up_good = metrics[int(rix)]
         idx = int(cix) - 1
-        _dialog = getattr(st, "dialog", None)
-        if callable(_dialog):
-            @_dialog("Details", width="large")
-            def _dlg():
-                _render_metric_drilldown_body(df, market, label, col, kind, up_good, win, idx)
-            _dlg()
-        else:
-            with st.container(border=True):
-                _render_metric_drilldown_body(df, market, label, col, kind, up_good, win, idx)
+        # Feed the shared drill-down (one dialog for cards + scorecard). A signature gate
+        # means the popover only (re)opens when the selected cell actually changes, so it
+        # doesn't spring back open after you dismiss it while the cell stays selected.
+        sig = f"{market}|{int(rix)}|{int(cix)}"
+        if st.session_state.get("_sc_last_sig") != sig:
+            st.session_state["_sc_last_sig"] = sig
+            st.session_state["_ov_dd"] = {
+                "market": market, "label": label, "col": col, "kind": kind,
+                "up_good": up_good, "month": win[idx],
+            }
+
+
+def _maybe_render_overview_dd(df, months_closed):
+    """Open the single shared drill-down dialog if a card/scorecard cell requested it."""
+    pay = st.session_state.get("_ov_dd")
+    if not isinstance(pay, dict):
+        return
+    month = pay.get("month")
+    upto = [m for m in months_closed if pd.Timestamp(m) <= pd.Timestamp(month)] or list(months_closed)
+    win = upto[-16:]
+    if not win:
+        return
+    idx = len(win) - 1
+
+    def _body():
+        _render_metric_drilldown_body(df, pay["market"], pay["label"], pay["col"],
+                                      pay["kind"], pay["up_good"], win, idx)
+
+    _dialog = getattr(st, "dialog", None)
+    if callable(_dialog):
+        def _dismiss():
+            st.session_state.pop("_ov_dd", None)
+        try:
+            _dec = _dialog("Details", width="large", on_dismiss=_dismiss)
+        except TypeError:
+            _dec = _dialog("Details", width="large")
+
+        @_dec
+        def _dlg():
+            _body()
+        _dlg()
+    else:
+        with st.container(border=True):
+            _body()
+            if st.button("Close", key="ov_dd_close_fallback"):
+                st.session_state.pop("_ov_dd", None)
+                st.rerun()
 
 
 # ---------------------------------------------------------------- main
