@@ -404,13 +404,13 @@ def _go():
 
 def _base_layout(fig, title, height=340):
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
+        title=dict(text=title, font=dict(size=14, color="#21362B", family="Fraunces, Georgia, serif")),
         height=height,
         margin=dict(l=8, r=8, t=44, b=4),
         legend=dict(orientation="h", y=-0.22, font=dict(size=11)),
         plot_bgcolor="white", paper_bgcolor="white",
         hovermode="x unified",
-        font=dict(family="Arial", size=11, color="#334155"),
+        font=dict(family="Inter, sans-serif", size=11, color="#334155"),
     )
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="#E7E4D8", griddash="dot", zerolinecolor="#D9D5C5")
@@ -698,7 +698,7 @@ def gulf_map(cts, vals, kind, title, height=470):
                         showcountries=True, countrycolor="#DAD6C8",
                         showland=True, landcolor="#F8F7F2")
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="#21362B", family="Arial Black, Arial")),
+        title=dict(text=title, font=dict(size=14, color="#21362B", family="Fraunces, Georgia, serif")),
         height=height, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
         showlegend=False)
     return fig
@@ -729,7 +729,7 @@ def donut(value, color, delta=None, height=168):
     fig = go.Figure(go.Pie(values=[v01, 1 - v01], hole=0.74, sort=False, direction="clockwise",
                            marker=dict(colors=[color, LIGHT]), textinfo="none", hoverinfo="skip"))
     fig.add_annotation(text=f"<b>{v * 100:.0f}%</b>", showarrow=False,
-                       font=dict(size=22, color="#21362B", family="Arial Black, Arial"))
+                       font=dict(size=22, color="#21362B", family="Fraunces, Georgia, serif"))
     fig.update_layout(height=height, margin=dict(l=6, r=6, t=6, b=0),
                       showlegend=False, paper_bgcolor="white")
     return fig
@@ -2632,6 +2632,12 @@ def _inject_exec_css():
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@500;600;700;800&display=swap');
         :root{--nm-serif:"Fraunces",Georgia,"Times New Roman",serif;
               --nm-sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
+        /* One type system across the whole panel: Inter for UI, Fraunces for headline
+           numbers/titles. Set on the app root + form controls; everything else inherits.
+           Icon fonts set their own family, so they're unaffected. */
+        .stApp, .stApp button, .stApp input, .stApp select, .stApp textarea,
+        .stApp [data-baseweb="select"], .stApp [data-testid="stMarkdownContainer"]{
+            font-family:var(--nm-sans);}
 
         /* terracotta active-tab underline + clean tab labels */
         .stTabs [data-baseweb="tab-list"]{gap:2px;border-bottom:1px solid #E0DCCE;}
@@ -2874,7 +2880,7 @@ def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=No
                       annotation_text=f"{alert * 100:.0f}% threshold", annotation_position="top right",
                       annotation_font=dict(size=10, color="#B4472E"))
     fig.update_layout(
-        title=dict(text=title, font=dict(size=15, color="#21362B", family="Georgia, serif")),
+        title=dict(text=title, font=dict(size=15, color="#21362B", family="Fraunces, Georgia, serif")),
         height=360, margin=dict(l=10, r=48, t=42, b=6),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", y=-0.18, font=dict(size=11, color="#55604F")),
@@ -3343,10 +3349,10 @@ def _inject_drilldown_css():
     # on the rerun that opens the dialog, exactly when it's needed.
     st.markdown("""<style>
     .dd-head{border-bottom:1px solid #E0DCCE;padding-bottom:10px;margin-bottom:4px;}
-    .dd-title{font-family:Georgia,serif;font-size:1.2rem;font-weight:700;color:#21362B;}
+    .dd-title{font-family:var(--nm-serif);font-size:1.2rem;font-weight:700;color:#21362B;}
     .dd-scope{font-size:.8rem;color:#7C776A;font-weight:600;margin-top:2px;}
     .dd-badge2{font-size:.6rem;font-weight:800;letter-spacing:.1em;color:#A79E8B;margin-top:6px;}
-    .dd-value{font-family:Georgia,serif;font-size:3rem;font-weight:700;color:#21362B;line-height:1;margin:12px 0 8px;}
+    .dd-value{font-family:var(--nm-serif);font-size:3rem;font-weight:700;color:#21362B;line-height:1;margin:12px 0 8px;}
     .dd-pill{display:inline-block;background:#EAF3EC;color:#3F7A52;font-weight:800;font-size:.8rem;
         padding:6px 14px;border-radius:999px;border:1px solid #CFE3D4;}
     .dd-pill.g{background:#EAF3EC;color:#3F7A52;}
@@ -3360,7 +3366,7 @@ def _inject_drilldown_css():
     .dd-cmp-wrap{border-top:1px solid #EEEBE1;margin-top:2px;}
     .dd-cmp{display:flex;align-items:center;padding:11px 2px;border-bottom:1px solid #EEEBE1;font-size:.86rem;}
     .dd-cmp>span:first-child{flex:1;color:#55604F;font-weight:600;}
-    .dd-cmp-v{font-family:Georgia,serif;font-weight:700;color:#21362B;width:90px;text-align:right;}
+    .dd-cmp-v{font-family:var(--nm-serif);font-weight:700;color:#21362B;width:90px;text-align:right;}
     .dd-cmp-d{width:86px;text-align:right;font-weight:800;font-size:.8rem;}
     .dd-cmp-d.up{color:#3F7A52;}.dd-cmp-d.dn{color:#B4472E;}
     </style>""", unsafe_allow_html=True)
