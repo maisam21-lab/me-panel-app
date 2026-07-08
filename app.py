@@ -2569,16 +2569,32 @@ def _render_ai_analyst(df, all_months, cur_month_start):
 
 # (label, bridge column, format kind, up_is_good). "mo" = months suffix.
 NEW_KPIS = [
-    ("Occupancy",        "occupancy",        "pct", True),
-    ("Live-Sold Rate",   "live_sold_rate",   "pct", True),
-    ("Churn Rate",       "rrl",              "pct", False),
-    ("Net Adds",         "net_adds",         "num", True),
-    ("Total Kitchens",   "total_kitchens",   "num", True),
-    ("Avg CW Duration",  "cw_duration",      "mo",  True),
-    ("Approved Deals",   "approved_deals",   "num", True),
+    ("Occupancy",        "occupancy",        "pct",  True),
+    ("Live-Sold Rate",   "live_sold_rate",   "pct",  True),
+    ("Churn Rate",       "rrl",              "pct",  False),
+    ("New CWs",          "cws",              "num",  True),
+    ("Approved Deals",   "approved_deals",   "num",  True),
+    ("Rev. Added",       "rra_usd",          "kusd", True),
+    ("Net Rev. Added",   "nrra_usd",         "kusd", True),
 ]
-NEW_HILITE = "Total Kitchens"
+NEW_HILITE = "Occupancy"
 NEW_CHART_COUNTRIES = ["UAE", "Saudi Arabia", "Kuwait", "Bahrain"]
+
+# Country snapshot table columns: (header, bridge col, format kind, colored, is_bar).
+SNAP_COLS = [
+    ("Occupancy",  "occupancy",             "pct",  False, True),
+    ("Live-Sold",  "live_sold_rate",        "pct",  False, False),
+    ("Churn Rate", "rrl",                   "pct",  "churn", False),
+    ("New CWs",    "cws",                   "num",  False, False),
+    ("Approved",   "approved_deals",        "num",  False, False),
+    ("RRA",        "rra_usd",               "kusd", False, False),
+    ("RRL",        "rrl_usd",               "kusd", "loss", False),
+    ("NRRA",       "nrra_usd",              "kusd", "signed", False),
+]
+SNAP_ROWS = ["Middle East", "UAE", "Kuwait", "Saudi Arabia", "Bahrain"]
+SNAP_FLAG = {"Middle East": "\U0001F30D", "UAE": "\U0001F1E6\U0001F1EA",
+             "Kuwait": "\U0001F1F0\U0001F1FC", "Saudi Arabia": "\U0001F1F8\U0001F1E6",
+             "Bahrain": "\U0001F1E7\U0001F1ED", "Qatar": "\U0001F1F6\U0001F1E6"}
 
 
 def _inject_exec_css():
@@ -2590,9 +2606,15 @@ def _inject_exec_css():
     st.markdown(
         """
         <style>
+        /* Rich serif for headline numbers (Fraunces), clean sans for UI (Inter).
+           Both fall back gracefully to system fonts if the CDN is blocked. */
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@500;600;700;800&display=swap');
+        :root{--nm-serif:"Fraunces",Georgia,"Times New Roman",serif;
+              --nm-sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
+
         /* terracotta active-tab underline + clean tab labels */
         .stTabs [data-baseweb="tab-list"]{gap:2px;border-bottom:1px solid #E0DCCE;}
-        .stTabs [data-baseweb="tab"]{font-weight:700;color:#7C776A;font-size:0.95rem;}
+        .stTabs [data-baseweb="tab"]{font-family:var(--nm-sans);font-weight:700;color:#7C776A;font-size:0.95rem;}
         .stTabs [aria-selected="true"]{color:#21362B;}
         .stTabs [data-baseweb="tab-highlight"]{background-color:#D97757 !important;}
 
@@ -2603,27 +2625,31 @@ def _inject_exec_css():
         .xh::after{content:"";position:absolute;right:-40px;top:-70px;width:300px;height:300px;
             background:radial-gradient(circle at center,rgba(217,119,87,.30),transparent 62%);pointer-events:none;}
         .xh img{height:44px;border-radius:9px;}
-        .xh-eyebrow{color:#9DB3A6;font-size:.66rem;font-weight:800;letter-spacing:.22em;text-transform:uppercase;margin:0;}
-        .xh-title{color:#fff;font-size:1.4rem;font-weight:800;letter-spacing:-.01em;margin:2px 0 0;}
+        .xh-eyebrow{font-family:var(--nm-sans);color:#9DB3A6;font-size:.66rem;font-weight:800;letter-spacing:.22em;text-transform:uppercase;margin:0;}
+        .xh-title{font-family:var(--nm-serif);color:#fff;font-size:1.5rem;font-weight:600;letter-spacing:-.01em;margin:2px 0 0;}
         .xh-right{margin-left:auto;z-index:1;color:#C9D5CC;font-size:.78rem;font-weight:600;
-            display:flex;align-items:center;gap:8px;}
+            font-family:var(--nm-sans);display:flex;align-items:center;gap:8px;}
 
         /* KPI card strip */
         .xk-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin:18px 0 6px;}
         .xk{position:relative;background:#FBFAF6;border:1px solid #E0DCCE;border-radius:14px;
-            padding:14px 15px 12px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;}
+            padding:15px 16px 13px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;}
         .xk.hi{background:#21362B;border-color:#21362B;}
-        .xk.hi .xk-label,.xk.hi .xk-num,.xk.hi .xk-dl{color:#fff;}
-        .xk.hi{outline:2px solid #D97757;outline-offset:0;}
-        .xk-label{font-size:.66rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#7C776A;margin:0;}
-        .xk-num{font-family:Georgia,"Times New Roman",serif;font-size:1.7rem;font-weight:700;
-            color:#21362B;margin:6px 0 4px;line-height:1;letter-spacing:-.01em;}
-        .xk-dl{font-size:.72rem;font-weight:700;color:#7C776A;display:flex;align-items:center;gap:5px;}
-        .xk-dl .up{color:#3F7A52;}.xk-dl .dn{color:#B4472E;}
-        .xk-spark{margin-top:10px;display:block;}
+        .xk.hi .xk-label{color:#9DB3A6;}
+        .xk.hi .xk-num{color:#fff;}
+        .xk.hi .xk-dl{color:#C9D5CC;}
+        .xk-label{font-family:var(--nm-sans);font-size:.64rem;font-weight:800;letter-spacing:.08em;
+            text-transform:uppercase;color:#A79E8B;margin:0;}
+        .xk-num{font-family:var(--nm-serif);font-size:2.05rem;font-weight:600;
+            color:#21362B;margin:6px 0 5px;line-height:1;letter-spacing:-.01em;
+            font-variant-numeric:lining-nums;}
+        .xk-dl{font-family:var(--nm-sans);font-size:.72rem;font-weight:600;color:#7C776A;display:flex;align-items:center;gap:5px;}
+        .xk-dl .up{color:#3F7A52;font-weight:700;}.xk-dl .dn{color:#B4472E;font-weight:700;}
+        .xk-spark{margin-top:11px;display:block;}
         .xk-tip{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);
             width:230px;background:#21362B;color:#EAF1EC;border-radius:12px;padding:12px 14px;
-            box-shadow:0 12px 34px rgba(33,54,43,.32);opacity:0;visibility:hidden;transition:.14s;z-index:50;}
+            font-family:var(--nm-sans);box-shadow:0 12px 34px rgba(33,54,43,.32);
+            opacity:0;visibility:hidden;transition:.14s;z-index:50;}
         .xk:hover .xk-tip{opacity:1;visibility:visible;}
         .xk-tip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
             border:7px solid transparent;border-top-color:#21362B;}
@@ -2631,8 +2657,30 @@ def _inject_exec_css():
         .xk-tip-row span{color:#9DB3A6;}.xk-tip-row b{font-weight:800;}
         .xk-tip-txt{font-size:.72rem;color:#C9D5CC;line-height:1.35;margin-top:8px;
             border-top:1px solid rgba(255,255,255,.12);padding-top:8px;}
-        @media(max-width:1100px){.xk-grid{grid-template-columns:repeat(3,1fr);}}
+        @media(max-width:1100px){.xk-grid{grid-template-columns:repeat(4,1fr);}}
         @media(max-width:640px){.xk-grid{grid-template-columns:repeat(2,1fr);}}
+
+        /* Country snapshot table */
+        .snap-card{background:#FBFAF6;border:1px solid #E0DCCE;border-radius:16px;
+            padding:20px 22px;box-shadow:0 2px 10px rgba(33,54,43,.06);margin:14px 0 8px;overflow-x:auto;}
+        .snap-h{font-family:var(--nm-serif);font-size:1.15rem;font-weight:600;color:#21362B;margin:0;}
+        .snap-sub{font-family:var(--nm-sans);font-size:.78rem;color:#A79E8B;margin:2px 0 14px;}
+        table.snap{width:100%;border-collapse:collapse;font-family:var(--nm-sans);min-width:820px;}
+        table.snap th{text-align:right;font-size:.64rem;font-weight:800;letter-spacing:.06em;
+            text-transform:uppercase;color:#A79E8B;padding:6px 12px 10px;border-bottom:1px solid #E0DCCE;}
+        table.snap th:first-child,table.snap td:first-child{text-align:left;}
+        table.snap td{text-align:right;padding:12px;border-bottom:1px solid #EEEBE1;
+            color:#21362B;font-weight:600;font-size:.9rem;white-space:nowrap;}
+        table.snap tr:last-child td{border-bottom:none;}
+        table.snap tr.me td{background:#F1EFE7;font-weight:800;}
+        table.snap tr.me td:first-child{border-radius:8px 0 0 8px;}
+        table.snap tr.me td:last-child{border-radius:0 8px 8px 0;}
+        .snap-mkt{display:flex;align-items:center;gap:9px;font-weight:700;}
+        .snap-flag{font-size:1rem;}
+        .snap-occ{display:flex;align-items:center;gap:10px;justify-content:flex-end;}
+        .snap-bar{width:64px;height:7px;border-radius:4px;background:#E6E2D6;overflow:hidden;flex:0 0 auto;}
+        .snap-bar>i{display:block;height:100%;border-radius:4px;}
+        .snap .pos{color:#3F7A52;}.snap .neg{color:#B4472E;}.snap .warn{color:#B4472E;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -2654,17 +2702,134 @@ def _kfmt(v, kind):
         return f"{v:.0f}mo"
     if kind == "num":
         return f"{v:,.0f}"
+    if kind == "kusd":
+        # thousands, no suffix — matches the All Hands slide style ("$184")
+        neg = "-" if v < 0 else ""
+        return f"{neg}${abs(v) / 1000:,.0f}"
     return fmt(v, kind)
 
 
 def _kdelta_txt(v, kind):
+    """Absolute-delta text (used in hover tooltip)."""
     if v is None:
         return "—"
     if kind == "pct":
         return f"{v * 100:+.2f}pp"
     if kind == "mo":
         return f"{v:+.1f}mo"
+    if kind == "kusd":
+        return ("+" if v >= 0 else "-") + f"${abs(v) / 1000:,.0f}"
     return f"{v:+,.0f}"
+
+
+def _face_delta(cur, base, kind, up_good):
+    """Card-face delta shown under the number: percentage-points for rates,
+    relative % change for counts & revenue (matches the concept). Returns
+    (text, css_class, arrow_html)."""
+    if cur is None or base is None:
+        return "—", "", ""
+    if kind == "pct":
+        d = (cur - base) * 100.0
+        txt = f"{d:+.2f}pp"
+        pos = d >= 0
+    else:
+        if base == 0:
+            return "n/a", "", ""
+        d = (cur - base) / abs(base) * 100.0
+        txt = f"{d:+.1f}%"
+        pos = d >= 0
+    good = pos if up_good else (not pos)
+    cls = "up" if good else "dn"
+    ar = "&#9650;" if pos else "&#9660;"
+    return txt, cls, ar
+
+
+def _render_country_snapshot(df, asof, *, title="Country Snapshot", cols=None, rows=None):
+    """All-Hands-style table: key metrics per market for the as-of month, ME row highlighted."""
+    cols = cols or SNAP_COLS
+    rows = rows or SNAP_ROWS
+    asof_lbl = pd.Timestamp(asof).strftime("%b %Y")
+
+    def gv(region, col):
+        r = df[(df["country"] == region) & (df["month_end"] == asof)]
+        if r.empty or col not in r.columns:
+            return None
+        try:
+            x = float(r[col].iloc[0])
+            return None if math.isnan(x) else x
+        except Exception:
+            return None
+
+    head = "".join(f"<th>{h}</th>" for (h, *_ ) in cols)
+    body = []
+    for region in rows:
+        is_me = region == "Middle East"
+        disp = region  # full market names in the snapshot, like the concept
+        flag = SNAP_FLAG.get(region, "")
+        tds = [f'<td><span class="snap-mkt"><span class="snap-flag">{flag}</span>{disp}</span></td>']
+        for (_h, col, kind, colored, is_bar) in cols:
+            v = gv(region, col)
+            txt = _kfmt(v, kind)
+            if is_bar and v is not None:
+                pct = max(0.0, min(1.0, v)) * 100.0
+                barcol = COUNTRY_COLORS.get(region, NAVY) if not is_me else NAVY
+                cell = (f'<div class="snap-occ"><span class="snap-bar">'
+                        f'<i style="width:{pct:.0f}%;background:{barcol}"></i></span>{txt}</div>')
+                tds.append(f"<td>{cell}</td>")
+                continue
+            klass = ""
+            if colored == "churn" and v is not None and v >= 0.05:
+                klass = "warn"
+            elif colored == "loss":
+                klass = "neg"
+            elif colored == "signed" and v is not None:
+                klass = "pos" if v >= 0 else "neg"
+                if v >= 0:
+                    txt = "+" + txt
+            tds.append(f'<td class="{klass}">{txt}</td>')
+        body.append(f'<tr class="{"me" if is_me else ""}">' + "".join(tds) + "</tr>")
+
+    st.markdown(
+        '<div class="snap-card">'
+        f'<p class="snap-h">{title} &mdash; {asof_lbl}</p>'
+        '<p class="snap-sub">Key metrics by market, current month</p>'
+        '<table class="snap"><thead><tr><th>Market</th>' + head + '</tr></thead>'
+        '<tbody>' + "".join(body) + '</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=None, is_pct=True):
+    """Smooth (spline) country lines in the brand palette — the 'fixed' chart style."""
+    go = _go()
+    lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
+    fig = go.Figure()
+    for cty in countries:
+        ys = _exec_series(df, cty, col, months_closed)
+        fig.add_trace(go.Scatter(
+            x=lbls, y=ys, mode="lines", name=EXEC_RDISP.get(cty, cty),
+            line=dict(color=COUNTRY_COLORS.get(cty, SLATE), width=2.6, shape="spline", smoothing=1.0),
+            connectgaps=True,
+            hovertemplate="<b>%{fullData.name}</b>: %{y}<extra></extra>",
+        ))
+    if alert is not None:
+        fig.add_hline(y=alert, line=dict(color="#B4472E", width=1.3, dash="dash"),
+                      annotation_text=f"{alert*100:.0f}% threshold", annotation_position="top right",
+                      annotation_font=dict(size=10, color="#B4472E"))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=15, color="#21362B", family="Georgia, serif")),
+        height=360, margin=dict(l=6, r=6, t=42, b=4),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=-0.16, font=dict(size=11, color="#7C776A")),
+        hovermode="x unified", font=dict(family="Inter, Arial", size=11, color="#7C776A"),
+    )
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#A79E8B"))
+    fig.update_yaxes(gridcolor="#E7E4D8", griddash="dot", zerolinecolor="#E7E4D8",
+                     tickfont=dict(size=10, color="#A79E8B"))
+    if is_pct:
+        fig.update_yaxes(tickformat=".0%")
+    with fig_col:
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 def _exec_series(df, region, col, months):
@@ -2747,24 +2912,22 @@ def _render_overview_tab(df, all_months, cur_month_start):
     cards = []
     for label, col, kind, up_good in NEW_KPIS:
         cur = _v(col, asof)
-        mom = (cur - _v(col, prev)) if (cur is not None and _v(col, prev) is not None) else None
+        pv = _v(col, prev)
         yv = _v(col, yoy)
+        mom = (cur - pv) if (cur is not None and pv is not None) else None
         yoy_d = (cur - yv) if (cur is not None and yv is not None) else None
-        # face delta = YoY (matches concept "vs Jun '25")
-        face = yoy_d
-        good = None if face is None else ((face >= 0) if up_good else (face <= 0))
-        ar = "" if face is None else ("&#9650;" if face >= 0 else "&#9660;")
-        cls = "" if good is None else ("up" if good else "dn")
+        # face delta = YoY, shown pp for rates / relative-% for counts & revenue
+        face_txt, cls, ar = _face_delta(cur, yv, kind, up_good)
         spark = _spark_svg(_exec_series(df, "Middle East", col, win),
                            "#fff" if label == NEW_HILITE else "#5F8575")
-        narr = f"{label} for the ME network as of {asof_ts.strftime('%b %Y')}. " \
+        narr = f"{label} across the ME network as of {asof_ts.strftime('%b %Y')}. " \
                f"MoM {_kdelta_txt(mom, kind)}, YoY {_kdelta_txt(yoy_d, kind)}."
         hi = " hi" if label == NEW_HILITE else ""
         cards.append(
             f'<div class="xk{hi}">'
             f'<p class="xk-label">{label}</p>'
             f'<p class="xk-num">{_kfmt(cur, kind)}</p>'
-            f'<p class="xk-dl"><span class="{cls}">{ar} {_kdelta_txt(face, kind)}</span>'
+            f'<p class="xk-dl"><span class="{cls}">{ar} {face_txt}</span>'
             f'<span style="color:#A79E8B;font-weight:600"> vs {yoy_lbl}</span></p>'
             f'{spark}'
             f'<div class="xk-tip">'
@@ -2775,38 +2938,19 @@ def _render_overview_tab(df, all_months, cur_month_start):
         )
     st.markdown('<div class="xk-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
 
-    # ---- country line charts ----
-    go = _go()
-    lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = go.Figure()
-        for cty in NEW_CHART_COUNTRIES:
-            ys = _exec_series(df, cty, "occupancy", months_closed)
-            fig.add_trace(go.Scatter(x=lbls, y=ys, mode="lines", name=EXEC_RDISP.get(cty, cty),
-                                     line=dict(color=COUNTRY_COLORS.get(cty, SLATE), width=2.2),
-                                     connectgaps=True))
-        _base_layout(fig, "Occupancy by Country", height=340)
-        pct_axis(fig)
-        fig.update_layout(hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-    with c2:
-        fig = go.Figure()
-        for cty in NEW_CHART_COUNTRIES[:3]:
-            ys = _exec_series(df, cty, "rrl", months_closed)
-            fig.add_trace(go.Scatter(x=lbls, y=ys, mode="lines", name=EXEC_RDISP.get(cty, cty),
-                                     line=dict(color=COUNTRY_COLORS.get(cty, SLATE), width=2.2),
-                                     connectgaps=True))
-        fig.add_hline(y=0.05, line=dict(color="#B4472E", width=1.4, dash="dash"),
-                      annotation_text="5% alert", annotation_position="top right",
-                      annotation_font=dict(size=10, color="#B4472E"))
-        _base_layout(fig, "Churn Rate by Country  ·  lower is better", height=340)
-        pct_axis(fig)
-        fig.update_layout(hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    # ---- All-Hands country snapshot ----
+    _render_country_snapshot(df, asof)
 
-    st.caption(f"KPIs are Middle East aggregate as of **{asof_ts.strftime('%b %Y')}** (last closed month). "
-               f"Hover any card for MoM &amp; YoY. Source: `{BRIDGE_TABLE}`.")
+    # ---- smooth country charts ----
+    c1, c2 = st.columns(2)
+    _country_line(c1, df, months_closed, "occupancy", "Occupancy by Country",
+                  countries=NEW_CHART_COUNTRIES, is_pct=True)
+    _country_line(c2, df, months_closed, "rrl", "Churn Rate by Country  ·  lower is better",
+                  countries=NEW_CHART_COUNTRIES[:3], alert=0.05, is_pct=True)
+
+    st.caption(f"KPI cards are Middle East aggregate as of **{asof_ts.strftime('%b %Y')}** (last closed month); "
+               f"delta is vs {yoy_lbl} (pp for rates, % for volumes). Snapshot is current month by market. "
+               f"$ figures in thousands. Source: `{BRIDGE_TABLE}`.")
 
 
 def _render_revenue_tab(df, all_months, cur_month_start):
@@ -2819,6 +2963,13 @@ def _render_revenue_tab(df, all_months, cur_month_start):
     go = _go()
     lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
     closed_idx = len(lbls) - 1
+    _render_country_snapshot(df, months_closed[-1], title="Revenue Snapshot", cols=[
+        ("RRA", "rra_usd", "kusd", False, False),
+        ("RRL", "rrl_usd", "kusd", "loss", False),
+        ("NRRA", "nrra_usd", "kusd", "signed", False),
+        ("Gross RR", "gross_rr_usd", "kusd", False, False),
+        ("TCV", "tcv_usd", "kusd", False, False),
+    ])
     sec("Recurring Revenue", "Recognized License-Fee revenue added, lost and net (Middle East)")
     c1, c2 = st.columns(2)
     with c1:
@@ -2858,6 +3009,14 @@ def _render_operations_tab(df, all_months, cur_month_start):
     go = _go()
     lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
     closed_idx = len(lbls) - 1
+    _render_country_snapshot(df, months_closed[-1], title="Operations Snapshot", cols=[
+        ("Occupancy", "occupancy", "pct", False, True),
+        ("New CWs", "cws", "num", False, False),
+        ("Approved", "approved_deals", "num", False, False),
+        ("Churns", "churns_excl_transfers", "num", False, False),
+        ("Net Adds", "net_adds", "num", "signed", False),
+        ("Live-Sold", "live_sold_rate", "pct", False, False),
+    ])
     sec("Sales & Churn", "Contract wins, approved deals and churns across the ME network")
     c1, c2 = st.columns(2)
     with c1:
