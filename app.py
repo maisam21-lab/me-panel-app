@@ -3101,6 +3101,9 @@ def _render_overview_tab(df, all_months, cur_month_start):
     _country_line(c2, df, months_closed, "rrl", "Churn Rate by Country  ·  lower is better",
                   countries=NEW_CHART_COUNTRIES[:3], alert=0.05, is_pct=True)
 
+    # ---- creative branded visuals: momentum combo, leaderboard, heatmap ----
+    _render_overview_charts_extra(df, months_closed, asof)
+
     # ---- interactive Gulf map ----
     sec("Network Map", "Gulf markets shaded by the selected metric for the as-of month")
     _map_opts = [
@@ -3497,6 +3500,104 @@ def _render_clickable_scorecard(df, months_closed, *, key_prefix="ov"):
                 "market": market, "label": label, "col": col, "kind": kind,
                 "up_good": up_good, "month": win[idx],
             }
+
+
+def _render_overview_charts_extra(df, months_closed, asof):
+    """Creative branded visuals for the Overview: a sales-momentum combo, a switchable
+    market leaderboard, and a month-over-month momentum heatmap."""
+    go = _go()
+    lbls = [pd.Timestamp(m).strftime("%b '%y") for m in months_closed]
+
+    # 1) Sales momentum — wins/approved/churn bars + net-adds line
+    sec("Sales Momentum", "Wins and approvals vs churn, with the resulting net adds")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=lbls, y=_exec_series(df, "Middle East", "cws", months_closed),
+                         name="New CWs", marker_color=TEAL))
+    fig.add_trace(go.Bar(x=lbls, y=_exec_series(df, "Middle East", "approved_deals", months_closed),
+                         name="Approved", marker_color=YELLOW))
+    fig.add_trace(go.Bar(
+        x=lbls, y=[-(x or 0) for x in _exec_series(df, "Middle East", "churns_excl_transfers", months_closed)],
+        name="Churns", marker_color=RED))
+    fig.add_trace(go.Scatter(
+        x=lbls, y=_exec_series(df, "Middle East", "net_adds", months_closed), name="Net Adds",
+        mode="lines+markers", line=dict(color=NAVY, width=3, shape="spline"),
+        marker=dict(size=6, color="white", line=dict(color=NAVY, width=2))))
+    fig.update_layout(
+        barmode="relative", height=360, margin=dict(l=10, r=10, t=10, b=6),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=-0.16, font=dict(size=11, color="#55604F")),
+        hovermode="x unified", font=dict(family="Inter, Arial", size=11, color="#55604F"),
+        bargap=0.28)
+    fig.add_hline(y=0, line=dict(color="#C9C3B2", width=1))
+    fig.update_xaxes(showline=True, linecolor="#C9C3B2", ticks="outside", tickcolor="#C9C3B2",
+                     showgrid=False, tickfont=dict(size=10, color="#7C776A"))
+    fig.update_yaxes(showline=True, linecolor="#C9C3B2", ticks="outside", tickcolor="#C9C3B2",
+                     gridcolor="#E7E4D8", griddash="dot", tickfont=dict(size=10, color="#7C776A"))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    lb, hm = st.columns([1, 1.15])
+    # 2) Market leaderboard — ranked, switchable metric
+    with lb:
+        sec("Market Leaderboard", "Ranked for the as-of month")
+        opts = [("Occupancy", "occupancy", "pct"), ("New CWs", "cws", "num"),
+                ("RRA $ (k)", "rra_usd", "kusd"), ("Net Adds", "net_adds", "num"),
+                ("Churn Rate", "rrl", "pct"), ("Approved", "approved_deals", "num")]
+        pick = st.selectbox("Rank markets by", [o[0] for o in opts], key="ov_lb_metric")
+        mcol, mkind = next((c, k) for (l, c, k) in opts if l == pick)
+        mkts = [c for c in ["Saudi Arabia", "UAE", "Kuwait", "Bahrain", "Qatar"] if c in set(df["country"])]
+        pairs = []
+        for c in mkts:
+            v = _exec_series(df, c, mcol, [asof])[0]
+            pairs.append((v if v is not None else 0.0, c))
+        pairs.sort()  # ascending -> best on top after horizontal
+        fig = go.Figure(go.Bar(
+            x=[v for v, _ in pairs], y=[EXEC_RDISP.get(c, c) for _, c in pairs], orientation="h",
+            marker_color=[COUNTRY_COLORS.get(c, SLATE) for _, c in pairs],
+            text=[fmt(v, mkind) for v, _ in pairs], textposition="outside",
+            marker_line_color="white", marker_line_width=1))
+        fig.update_layout(height=300, margin=dict(l=6, r=60, t=8, b=6),
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          font=dict(family="Inter, Arial", size=11, color="#55604F"), showlegend=False)
+        fig.update_xaxes(visible=False)
+        fig.update_yaxes(showline=False, tickfont=dict(size=12, color="#21362B"))
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # 3) Momentum heatmap — MoM % change, last 12 months
+    with hm:
+        sec("Momentum Heatmap", "Month-over-month % change")
+        hm_metrics = [("Occupancy", "occupancy"), ("Live-Sold", "live_sold_rate"),
+                      ("Churn", "rrl"), ("New CWs", "cws"), ("Approved", "approved_deals"),
+                      ("Net Adds", "net_adds"), ("RRA $", "rra_usd"), ("NRRA $", "nrra_usd")]
+        last12 = months_closed[-12:]
+        z, txt = [], []
+        for name, col in hm_metrics:
+            s = _exec_series(df, "Middle East", col, months_closed)
+            row, trow = [], []
+            for m in last12:
+                i = months_closed.index(m)
+                cur = s[i]
+                prv = s[i - 1] if i >= 1 else None
+                if cur is not None and prv not in (None, 0):
+                    pctv = (cur - prv) / abs(prv) * 100
+                    row.append(pctv)
+                    trow.append(f"{pctv:+.0f}%")
+                else:
+                    row.append(None)
+                    trow.append("")
+            z.append(row)
+            txt.append(trow)
+        fig = go.Figure(go.Heatmap(
+            z=z, x=[pd.Timestamp(m).strftime("%b'%y") for m in last12],
+            y=[n for n, _ in hm_metrics], text=txt, texttemplate="%{text}",
+            textfont=dict(size=9, color="#21362B"),
+            colorscale=[[0, "#B4472E"], [0.5, "#F3F0E7"], [1, "#5F8575"]], zmid=0,
+            showscale=False, xgap=3, ygap=3, hoverinfo="skip"))
+        fig.update_layout(height=300, margin=dict(l=6, r=6, t=8, b=6),
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          font=dict(family="Inter, Arial", size=10, color="#55604F"))
+        fig.update_xaxes(tickfont=dict(size=9, color="#7C776A"), side="top")
+        fig.update_yaxes(tickfont=dict(size=11, color="#21362B"), autorange="reversed")
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 def _maybe_render_overview_dd(df, months_closed):
