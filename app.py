@@ -3320,7 +3320,8 @@ def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months
                       showlegend=False, font=dict(family="Inter, Arial", size=9, color="#A79E8B"))
     fig.update_xaxes(showgrid=False, tickfont=dict(size=9, color="#A79E8B"), nticks=6)
     fig.update_yaxes(visible=False)
-    st.markdown('<div class="dd-sec">16-MONTH TREND</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dd-sec"><span class="dd-sec-l">16-MONTH TREND</span>'
+                '<span class="dd-hint">click = this point</span></div>', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     # percentile
@@ -3331,10 +3332,14 @@ def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months
         ordv = int(round(rank * 100))
         suf = "th" if 11 <= ordv % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(ordv % 10, "th")
         st.markdown(
-            '<div class="dd-sec">WHERE IT SITS</div>'
-            f'<div class="dd-slider"><div class="dd-track"><i style="left:{pos*100:.0f}%"></i></div>'
-            f'<div class="dd-scale"><span>{_kfmt(mn, kind)}</span>'
-            f'<b>{ordv}{suf} percentile</b><span>{_kfmt(mx, kind)}</span></div></div>',
+            '<div class="dd-sec"><span class="dd-sec-l">WHERE IT SITS</span></div>'
+            f'<div class="dd-slider">'
+            f'<div class="dd-track"><span class="dd-fill" style="width:{pos*100:.0f}%"></span>'
+            f'<i style="left:{pos*100:.0f}%"></i></div>'
+            f'<div class="dd-scale"><span class="dd-mm">MIN</span>'
+            f'<b>{ordv}{suf} percentile</b><span class="dd-mm">MAX</span></div>'
+            f'<div class="dd-scale2"><span>{_kfmt(mn, kind)}</span>'
+            f'<span>{_kfmt(mx, kind)}</span></div></div>',
             unsafe_allow_html=True,
         )
 
@@ -3363,47 +3368,61 @@ def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months
         f'<span class="dd-cmp-d {c[1]}">{c[0]}</span></div>'
         for lab, bv, c in rows
     )
-    st.markdown('<div class="dd-sec">COMPARISONS</div><div class="dd-cmp-wrap">' + body + "</div>",
-                unsafe_allow_html=True)
+    st.markdown('<div class="dd-sec"><span class="dd-sec-l">COMPARISONS</span></div>'
+                '<div class="dd-cmp-wrap">' + body + "</div>", unsafe_allow_html=True)
 
 
 def _inject_drilldown_css():
     # Inject every run (see _inject_exec_css note) — a session guard would drop the styling
     # on the rerun that opens the dialog, exactly when it's needed.
     st.markdown("""<style>
-    .dd-head{border-bottom:1px solid #E0DCCE;padding-bottom:10px;margin-bottom:4px;
-        animation:dd-rise .4s both;}
-    .dd-title{font-family:var(--nm-serif);font-size:1.2rem;font-weight:700;color:#21362B;}
-    .dd-scope{font-size:.8rem;color:#7C776A;font-weight:600;margin-top:2px;}
-    .dd-badge2{font-size:.6rem;font-weight:800;letter-spacing:.1em;color:#A79E8B;margin-top:6px;}
-    .dd-value{font-family:var(--nm-serif);font-size:3rem;font-weight:700;color:#21362B;line-height:1;
-        margin:12px 0 8px;animation:dd-pop .5s cubic-bezier(.2,.8,.2,1.15) both;transform-origin:left center;}
-    .dd-pill{display:inline-block;background:#EAF3EC;color:#3F7A52;font-weight:800;font-size:.8rem;
-        padding:6px 14px;border-radius:999px;border:1px solid #CFE3D4;
+    /* Drill-down card styled to match the reference: highlighted section labels,
+       gray-block value, bordered pill, filled slider with MIN/MAX, boxed comparisons. */
+    .dd-head{border-left:4px solid #3F7A52;padding:2px 0 10px 12px;margin-bottom:6px;
+        border-bottom:1px solid #E0DCCE;animation:dd-rise .4s both;}
+    .dd-title{font-family:var(--nm-sans);font-size:1.15rem;font-weight:800;color:#21362B;}
+    .dd-scope{font-size:.82rem;color:#5B6B5E;font-weight:600;margin-top:3px;}
+    .dd-scope b{background:#E7EDE8;padding:1px 6px;border-radius:4px;}
+    .dd-badge2{font-size:.62rem;font-weight:800;letter-spacing:.08em;color:#8A9A8C;margin-top:7px;}
+    .dd-value{font-family:var(--nm-serif);font-size:2.9rem;font-weight:700;color:#21362B;line-height:1.05;
+        display:inline-block;background:#EDEAE1;padding:2px 14px;border-radius:9px;margin:14px 0 10px;
+        animation:dd-pop .5s cubic-bezier(.2,.8,.2,1.15) both;transform-origin:left center;}
+    .dd-pill{display:inline-block;background:#E7F3EA;color:#2E7D4E;font-weight:800;font-size:.82rem;
+        padding:7px 16px;border-radius:999px;border:1px solid #B7DCC2;
         animation:dd-pop .5s .14s cubic-bezier(.2,.8,.2,1.3) both;}
-    .dd-pill.g{background:#EAF3EC;color:#3F7A52;}
-    .dd-sec{font-size:.64rem;font-weight:800;letter-spacing:.09em;color:#A79E8B;margin:16px 0 4px;}
+    .dd-pill.g{background:#E7F3EA;color:#2E7D4E;}
+    .dd-sec{display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px;}
+    .dd-sec-l{background:#E7E3D8;color:#6B6656;font-size:.62rem;font-weight:800;letter-spacing:.09em;
+        padding:3px 8px;border-radius:4px;}
+    .dd-hint{font-size:.72rem;font-style:italic;color:#A79E8B;}
     .dd-slider{margin:6px 0 4px;}
-    .dd-track{position:relative;height:6px;border-radius:4px;background:#E6E2D6;}
-    .dd-track>i{position:absolute;top:50%;transform:translate(-50%,-50%);width:20px;height:20px;
-        border-radius:50%;background:#3F7A52;border:3px solid #fff;box-shadow:0 2px 6px rgba(33,54,43,.25);
-        animation:dd-thumb .75s .1s cubic-bezier(.2,.85,.25,1) both;}
-    .dd-scale{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:.72rem;color:#7C776A;}
-    .dd-scale b{color:#3F7A52;font-weight:800;}
-    .dd-cmp-wrap{border-top:1px solid #EEEBE1;margin-top:2px;}
-    .dd-cmp{display:flex;align-items:center;padding:11px 2px;border-bottom:1px solid #EEEBE1;font-size:.86rem;
-        animation:dd-rise .45s both;}
+    .dd-track{position:relative;height:7px;border-radius:5px;background:#E6E2D6;}
+    .dd-fill{position:absolute;left:0;top:0;height:100%;border-radius:5px;background:#3F7A52;
+        animation:dd-fill .8s cubic-bezier(.2,.85,.25,1) both;transform-origin:left;}
+    .dd-track>i{position:absolute;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;
+        border-radius:50%;background:#fff;border:4px solid #3F7A52;box-shadow:0 2px 7px rgba(33,54,43,.28);
+        animation:dd-thumb .8s .05s cubic-bezier(.2,.85,.25,1) both;}
+    .dd-scale{display:flex;justify-content:space-between;align-items:center;margin-top:12px;
+        font-size:.68rem;color:#A79E8B;font-weight:800;letter-spacing:.05em;}
+    .dd-scale b{color:#21362B;font-weight:800;font-size:.9rem;letter-spacing:0;}
+    .dd-scale2{display:flex;justify-content:space-between;margin-top:2px;font-size:.78rem;
+        font-weight:700;color:#55604F;}
+    .dd-cmp-wrap{margin-top:4px;}
+    .dd-cmp{display:flex;align-items:center;padding:11px 14px;margin-bottom:5px;font-size:.86rem;
+        background:#F5F2EA;border-radius:9px;animation:dd-rise .45s both;}
     .dd-cmp:nth-child(1){animation-delay:.06s}.dd-cmp:nth-child(2){animation-delay:.13s}
     .dd-cmp:nth-child(3){animation-delay:.20s}.dd-cmp:nth-child(4){animation-delay:.27s}
     .dd-cmp>span:first-child{flex:1;color:#55604F;font-weight:600;}
-    .dd-cmp-v{font-family:var(--nm-serif);font-weight:700;color:#21362B;width:90px;text-align:right;}
-    .dd-cmp-d{width:86px;text-align:right;font-weight:800;font-size:.8rem;}
-    .dd-cmp-d.up{color:#3F7A52;}.dd-cmp-d.dn{color:#B4472E;}
+    .dd-cmp-v{font-family:var(--nm-serif);font-weight:700;color:#21362B;text-align:right;
+        background:#EAE7DD;padding:2px 9px;border-radius:5px;margin-right:12px;min-width:70px;}
+    .dd-cmp-d{width:82px;text-align:right;font-weight:800;font-size:.82rem;}
+    .dd-cmp-d.up{color:#2E7D4E;}.dd-cmp-d.dn{color:#B4472E;}
     @keyframes dd-pop{from{opacity:0;transform:scale(.72)}to{opacity:1;transform:none}}
     @keyframes dd-rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
     @keyframes dd-thumb{from{left:0!important}}
+    @keyframes dd-fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
     @media(prefers-reduced-motion:reduce){
-        .dd-value,.dd-pill,.dd-track>i,.dd-cmp,.dd-head{animation:none!important;}}
+        .dd-value,.dd-pill,.dd-track>i,.dd-fill,.dd-cmp,.dd-head{animation:none!important;}}
     </style>""", unsafe_allow_html=True)
 
 
