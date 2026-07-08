@@ -3067,6 +3067,10 @@ def _render_overview_tab(df, all_months, cur_month_start):
     # ---- All-Hands country snapshot ----
     _render_country_snapshot(df, asof)
 
+    # ---- clickable scorecard: every number opens a drill-down ----
+    sec("Scorecard", "Click any number for its trend, percentile and comparisons")
+    _render_clickable_scorecard(df, months_closed, key_prefix="ov")
+
     # ---- smooth country charts (with rulers + end labels) ----
     c1, c2 = st.columns(2)
     _country_line(c1, df, months_closed, "occupancy", "Occupancy by Country",
@@ -3207,6 +3211,256 @@ def _render_operations_tab(df, all_months, cur_month_start):
                  "Owned sites", ORANGE, closed_idx, fmt_kind="num")
         _base_layout(fig, "Owned sites", height=340)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+# ================================================================ Clickable metric grid + drill-down
+# Every number in the grid is clickable (Streamlit single-cell selection); a click opens a
+# green NAMAA drill-down popover: value + "highest/lowest since" badge + 16-month trend with
+# the point marked + percentile ("where it sits") + comparisons. Keeps the current colors.
+
+GRID_METRICS = [
+    ("Closed Wons",     "cws",                    "num",  True),
+    ("Approved Deals",  "approved_deals",         "num",  True),
+    ("Churns",          "churns_excl_transfers",  "num",  False),
+    ("Net Adds",        "net_adds",               "num",  True),
+    ("Occupancy",       "occupancy",              "pct",  True),
+    ("Live-Sold Rate",  "live_sold_rate",         "pct",  True),
+    ("Churn Rate",      "rrl",                    "pct",  False),
+    ("RRA $ (k)",       "rra_usd",                "kusd", True),
+    ("RRL $ (k)",       "rrl_usd",                "kusd", False),
+    ("NRRA $ (k)",      "nrra_usd",               "kusd", True),
+]
+
+
+def _since_badge(vals, idx, up_good, month_labels):
+    """'Highest/Lowest since <month>' badge, direction-aware. Returns (text, cls) or None."""
+    v = vals[idx]
+    if v is None:
+        return None
+    prior = [(j, vals[j]) for j in range(idx) if vals[j] is not None]
+    if not prior:
+        return None
+    if up_good:
+        exceeded = [j for j, x in prior if x >= v]
+        if not exceeded:
+            return ("&#8599; Highest on record", "g")
+        last = max(exceeded)
+        if last < idx - 1:
+            return (f"&#8599; Highest since {month_labels[last + 1]}", "g")
+    else:
+        below = [j for j, x in prior if x <= v]
+        if not below:
+            return ("&#8600; Lowest on record", "g")
+        last = max(below)
+        if last < idx - 1:
+            return (f"&#8600; Lowest since {month_labels[last + 1]}", "g")
+    return None
+
+
+def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months, idx):
+    """The green drill-down popover content for one clicked cell."""
+    vals = _exec_series(df, market, col, months)
+    labels = [pd.Timestamp(m).strftime("%b %Y") for m in months]
+    labels_sh = [pd.Timestamp(m).strftime("%b '%y") for m in months]
+    v = vals[idx]
+    hist = [x for x in vals if x is not None]
+
+    # header
+    st.markdown(
+        f'<div class="dd-head"><div class="dd-title">{mlabel}</div>'
+        f'<div class="dd-scope">{market} &middot; {labels[idx]}</div>'
+        f'<div class="dd-badge2">LIVE DATA &middot; RECOMPUTED FROM EXTRACT</div></div>'
+        f'<div class="dd-value">{_kfmt(v, kind)}</div>',
+        unsafe_allow_html=True,
+    )
+    sb = _since_badge(vals, idx, up_good, labels)
+    if sb:
+        st.markdown(f'<span class="dd-pill {sb[1]}">{sb[0]}</span>', unsafe_allow_html=True)
+
+    # trend
+    go = _go()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=labels_sh, y=vals, mode="lines", line=dict(color="#5F8575", width=2.4, shape="spline"),
+        fill="tozeroy", fillcolor="rgba(95,133,117,.10)", connectgaps=True, hoverinfo="skip"))
+    if v is not None:
+        fig.add_trace(go.Scatter(x=[labels_sh[idx]], y=[v], mode="markers",
+                                 marker=dict(size=11, color="#21362B", line=dict(color="white", width=2)),
+                                 hoverinfo="skip", showlegend=False))
+        fig.add_vline(x=idx, line=dict(color="#5F8575", width=1, dash="dot"))
+    fig.update_layout(height=150, margin=dict(l=6, r=6, t=6, b=4),
+                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                      showlegend=False, font=dict(family="Inter, Arial", size=9, color="#A79E8B"))
+    fig.update_xaxes(showgrid=False, tickfont=dict(size=9, color="#A79E8B"), nticks=6)
+    fig.update_yaxes(visible=False)
+    st.markdown('<div class="dd-sec">16-MONTH TREND</div>', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # percentile
+    if v is not None and len(hist) >= 2:
+        mn, mx = min(hist), max(hist)
+        rank = sum(1 for x in hist if x <= v) / len(hist)
+        pos = 0.0 if mx == mn else (v - mn) / (mx - mn)
+        ordv = int(round(rank * 100))
+        suf = "th" if 11 <= ordv % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(ordv % 10, "th")
+        st.markdown(
+            '<div class="dd-sec">WHERE IT SITS</div>'
+            f'<div class="dd-slider"><div class="dd-track"><i style="left:{pos*100:.0f}%"></i></div>'
+            f'<div class="dd-scale"><span>{_kfmt(mn, kind)}</span>'
+            f'<b>{ordv}{suf} percentile</b><span>{_kfmt(mx, kind)}</span></div></div>',
+            unsafe_allow_html=True,
+        )
+
+    # comparisons
+    def _cmp(base):
+        if v is None or base is None:
+            return "—", ""
+        d = v - base
+        good = (d >= 0) if up_good else (d <= 0)
+        cls = "up" if good else "dn"
+        ar = "&#9650;" if d >= 0 else "&#9660;"
+        return f'{ar} {_kdelta_txt(d, kind)}', cls
+    row_avg = (sum(hist) / len(hist)) if hist else None
+    prev_v = vals[idx - 1] if idx >= 1 else None
+    yoy_v = vals[idx - 12] if idx >= 12 else None
+    anch_v = next((x for x in vals if x is not None), None)  # first non-null in window
+    rows = [
+        ("Row average", row_avg, _cmp(row_avg)),
+        ("Previous month", prev_v, _cmp(prev_v)),
+        ("Same month last yr", yoy_v, _cmp(yoy_v)),
+        ("Anchor month", anch_v, _cmp(anch_v)),
+    ]
+    body = "".join(
+        f'<div class="dd-cmp"><span>{lab}</span>'
+        f'<span class="dd-cmp-v">{_kfmt(bv, kind)}</span>'
+        f'<span class="dd-cmp-d {c[1]}">{c[0]}</span></div>'
+        for lab, bv, c in rows
+    )
+    st.markdown('<div class="dd-sec">COMPARISONS</div><div class="dd-cmp-wrap">' + body + "</div>",
+                unsafe_allow_html=True)
+
+
+def _inject_drilldown_css():
+    if st.session_state.get("_dd_css"):
+        return
+    st.session_state["_dd_css"] = True
+    st.markdown("""<style>
+    .dd-head{border-bottom:1px solid #E0DCCE;padding-bottom:10px;margin-bottom:4px;}
+    .dd-title{font-family:Georgia,serif;font-size:1.2rem;font-weight:700;color:#21362B;}
+    .dd-scope{font-size:.8rem;color:#7C776A;font-weight:600;margin-top:2px;}
+    .dd-badge2{font-size:.6rem;font-weight:800;letter-spacing:.1em;color:#A79E8B;margin-top:6px;}
+    .dd-value{font-family:Georgia,serif;font-size:3rem;font-weight:700;color:#21362B;line-height:1;margin:12px 0 8px;}
+    .dd-pill{display:inline-block;background:#EAF3EC;color:#3F7A52;font-weight:800;font-size:.8rem;
+        padding:6px 14px;border-radius:999px;border:1px solid #CFE3D4;}
+    .dd-pill.g{background:#EAF3EC;color:#3F7A52;}
+    .dd-sec{font-size:.64rem;font-weight:800;letter-spacing:.09em;color:#A79E8B;margin:16px 0 4px;}
+    .dd-slider{margin:6px 0 4px;}
+    .dd-track{position:relative;height:6px;border-radius:4px;background:#E6E2D6;}
+    .dd-track>i{position:absolute;top:50%;transform:translate(-50%,-50%);width:20px;height:20px;
+        border-radius:50%;background:#3F7A52;border:3px solid #fff;box-shadow:0 2px 6px rgba(33,54,43,.25);}
+    .dd-scale{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:.72rem;color:#7C776A;}
+    .dd-scale b{color:#3F7A52;font-weight:800;}
+    .dd-cmp-wrap{border-top:1px solid #EEEBE1;margin-top:2px;}
+    .dd-cmp{display:flex;align-items:center;padding:11px 2px;border-bottom:1px solid #EEEBE1;font-size:.86rem;}
+    .dd-cmp>span:first-child{flex:1;color:#55604F;font-weight:600;}
+    .dd-cmp-v{font-family:Georgia,serif;font-weight:700;color:#21362B;width:90px;text-align:right;}
+    .dd-cmp-d{width:86px;text-align:right;font-weight:800;font-size:.8rem;}
+    .dd-cmp-d.up{color:#3F7A52;}.dd-cmp-d.dn{color:#B4472E;}
+    </style>""", unsafe_allow_html=True)
+
+
+def _render_clickable_scorecard(df, months_closed, *, key_prefix="ov"):
+    """Green scorecard grid (metrics × months, per market). Every number is clickable and
+    opens the drill-down popover. Matches the reference and keeps the current colors."""
+    _inject_drilldown_css()
+    if len(months_closed) < 3:
+        st.info("Need at least 3 closed months for the scorecard.")
+        return
+    win = months_closed[-16:]
+    month_lbls = [pd.Timestamp(m).strftime("%b '%y") for m in win]
+    markets = [c for c in EXEC_REGIONS if c in set(df["country"])]
+    mc1, _ = st.columns([1.4, 4.6])
+    with mc1:
+        market = st.selectbox("Market", markets, index=0, key=f"{key_prefix}_grid_mkt")
+
+    # numeric matrix + formatted display
+    metrics = GRID_METRICS
+    num = {}
+    disp_rows = []
+    for (label, col, kind, up_good) in metrics:
+        series = _exec_series(df, market, col, win)
+        num[label] = (series, col, kind, up_good)
+        disp_rows.append([label] + [_kfmt(v, kind) for v in series])
+    disp = pd.DataFrame(disp_rows, columns=["Metric"] + month_lbls)
+
+    # green per-row intensity CSS (better = greener), keeping the current palette
+    def _css(_):
+        out = pd.DataFrame("", index=disp.index, columns=disp.columns)
+        for ri, (label, col, kind, up_good) in enumerate(metrics):
+            series = num[label][0]
+            hist = [x for x in series if x is not None]
+            if not hist:
+                continue
+            mn, mx = min(hist), max(hist)
+            for ci, v in enumerate(series):
+                if v is None:
+                    continue
+                t = 0.0 if mx == mn else (v - mn) / (mx - mn)
+                if not up_good:
+                    t = 1 - t
+                a = 0.06 + 0.30 * t
+                out.iloc[ri, ci + 1] = f"background-color:rgba(95,133,117,{a:.2f});color:#21362B;"
+            out.iloc[ri, 0] = "background-color:#F1EFE7;color:#21362B;font-weight:700;"
+        return out
+
+    styler = disp.style.apply(_css, axis=None)
+    try:
+        styler = styler.hide(axis="index")
+    except Exception:
+        pass
+
+    st.caption("Click any number for its trend, percentile and comparisons.")
+    sel_state = None
+    try:
+        sel_state = st.dataframe(styler, use_container_width=True, hide_index=True,
+                                 key=f"{key_prefix}_scorecard_df",
+                                 on_select="rerun", selection_mode="single-cell")
+    except TypeError:
+        st.dataframe(styler, use_container_width=True, hide_index=True)
+
+    # resolve clicked cell -> open dialog
+    rix = cix = None
+    if sel_state is not None:
+        sel = getattr(sel_state, "selection", None)
+        sd = {}
+        if hasattr(sel, "to_dict"):
+            try:
+                sd = dict(sel.to_dict())
+            except Exception:
+                sd = {}
+        elif isinstance(sel, dict):
+            sd = dict(sel)
+        cells = list(sd.get("cells", []) or [])
+        if cells:
+            c0 = cells[0]
+            if isinstance(c0, dict):
+                rix, cix = c0.get("row"), c0.get("column")
+            elif isinstance(c0, (list, tuple)) and len(c0) >= 2:
+                rix, cix = c0[0], c0[1]
+    if isinstance(cix, str):
+        cix = (["Metric"] + month_lbls).index(cix) if cix in (["Metric"] + month_lbls) else None
+    if rix is not None and cix is not None and int(cix) >= 1 and int(rix) < len(metrics):
+        label, col, kind, up_good = metrics[int(rix)]
+        idx = int(cix) - 1
+        _dialog = getattr(st, "dialog", None)
+        if callable(_dialog):
+            @_dialog("Details", width="large")
+            def _dlg():
+                _render_metric_drilldown_body(df, market, label, col, kind, up_good, win, idx)
+            _dlg()
+        else:
+            with st.container(border=True):
+                _render_metric_drilldown_body(df, market, label, col, kind, up_good, win, idx)
 
 
 # ---------------------------------------------------------------- main
