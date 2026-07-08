@@ -2799,33 +2799,51 @@ def _render_country_snapshot(df, asof, *, title="Country Snapshot", cols=None, r
     )
 
 
-def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=None, is_pct=True):
-    """Smooth (spline) country lines in the brand palette — the 'fixed' chart style."""
+def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=None,
+                  is_pct=True, val_kind=None):
+    """Smooth country lines with visible axis rulers + end-of-line value labels."""
     go = _go()
     lbls = [pd.Timestamp(m).strftime("%b %y") for m in months_closed]
+    _vk = val_kind or ("pct" if is_pct else "num")
     fig = go.Figure()
     for cty in countries:
         ys = _exec_series(df, cty, col, months_closed)
+        color = COUNTRY_COLORS.get(cty, SLATE)
+        cd = [fmt(v, _vk) if v is not None else "" for v in ys]
         fig.add_trace(go.Scatter(
             x=lbls, y=ys, mode="lines", name=EXEC_RDISP.get(cty, cty),
-            line=dict(color=COUNTRY_COLORS.get(cty, SLATE), width=2.6, shape="spline", smoothing=1.0),
-            connectgaps=True,
-            hovertemplate="<b>%{fullData.name}</b>: %{y}<extra></extra>",
+            line=dict(color=color, width=2.6, shape="spline", smoothing=1.0),
+            connectgaps=True, customdata=cd,
+            hovertemplate="<b>%{fullData.name}</b>: %{customdata}<extra></extra>",
         ))
+        # end marker + value label so each line is readable without hovering
+        last = next(((lbls[i], ys[i]) for i in range(len(ys) - 1, -1, -1) if ys[i] is not None), None)
+        if last is not None:
+            fig.add_trace(go.Scatter(
+                x=[last[0]], y=[last[1]], mode="markers+text",
+                marker=dict(size=7, color="white", line=dict(color=color, width=2.2)),
+                text=[fmt(last[1], _vk)], textposition="middle right",
+                textfont=dict(size=10, color=color, family="Inter, Arial"),
+                showlegend=False, hoverinfo="skip", cliponaxis=False,
+            ))
     if alert is not None:
         fig.add_hline(y=alert, line=dict(color="#B4472E", width=1.3, dash="dash"),
-                      annotation_text=f"{alert*100:.0f}% threshold", annotation_position="top right",
+                      annotation_text=f"{alert * 100:.0f}% threshold", annotation_position="top right",
                       annotation_font=dict(size=10, color="#B4472E"))
     fig.update_layout(
         title=dict(text=title, font=dict(size=15, color="#21362B", family="Georgia, serif")),
-        height=360, margin=dict(l=6, r=6, t=42, b=4),
+        height=360, margin=dict(l=10, r=48, t=42, b=6),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", y=-0.16, font=dict(size=11, color="#7C776A")),
-        hovermode="x unified", font=dict(family="Inter, Arial", size=11, color="#7C776A"),
+        legend=dict(orientation="h", y=-0.18, font=dict(size=11, color="#55604F")),
+        hovermode="x unified", font=dict(family="Inter, Arial", size=11, color="#55604F"),
     )
-    fig.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#A79E8B"))
-    fig.update_yaxes(gridcolor="#E7E4D8", griddash="dot", zerolinecolor="#E7E4D8",
-                     tickfont=dict(size=10, color="#A79E8B"))
+    # visible rulers: axis lines + outside ticks on both axes
+    fig.update_xaxes(showline=True, linecolor="#C9C3B2", linewidth=1.2, ticks="outside",
+                     tickcolor="#C9C3B2", ticklen=4, showgrid=False,
+                     tickfont=dict(size=10, color="#7C776A"))
+    fig.update_yaxes(showline=True, linecolor="#C9C3B2", linewidth=1.2, ticks="outside",
+                     tickcolor="#C9C3B2", ticklen=4, gridcolor="#E7E4D8", griddash="dot",
+                     zerolinecolor="#C9C3B2", tickfont=dict(size=10, color="#7C776A"))
     if is_pct:
         fig.update_yaxes(tickformat=".0%")
     with fig_col:
@@ -2888,14 +2906,20 @@ def _render_overview_tab(df, all_months, cur_month_start):
     if len(months_closed) < 2:
         st.info("Not enough closed months yet.")
         return
-    asof = months_closed[-1]
-    prev = months_closed[-2]
+    # ---- dynamic "as of" month: drives the KPI cards AND the snapshot table ----
+    _lbls_all = [pd.Timestamp(m).strftime("%b %Y") for m in months_closed]
+    csel, _ = st.columns([1.3, 4.7])
+    with csel:
+        _pick = st.selectbox("As of month", list(reversed(_lbls_all)), index=0, key="ov_asof")
+    _ai = _lbls_all.index(_pick)
+    asof = months_closed[_ai]
+    prev = months_closed[_ai - 1] if _ai >= 1 else months_closed[0]
     asof_ts = pd.Timestamp(asof)
     yoy_ts = asof_ts - pd.DateOffset(years=1)
     yoy = next((m for m in months_closed if pd.Timestamp(m) == yoy_ts), None)
     yoy_lbl = yoy_ts.strftime("%b '%y")
     prev_lbl = pd.Timestamp(prev).strftime("%b '%y")
-    win = months_closed[-13:]  # ~1yr sparkline window
+    win = months_closed[max(0, _ai - 12): _ai + 1]  # ~1yr sparkline window ending at as-of
 
     def _v(col, m):
         if m is None:
@@ -2941,15 +2965,44 @@ def _render_overview_tab(df, all_months, cur_month_start):
     # ---- All-Hands country snapshot ----
     _render_country_snapshot(df, asof)
 
-    # ---- smooth country charts ----
+    # ---- smooth country charts (with rulers + end labels) ----
     c1, c2 = st.columns(2)
     _country_line(c1, df, months_closed, "occupancy", "Occupancy by Country",
                   countries=NEW_CHART_COUNTRIES, is_pct=True)
     _country_line(c2, df, months_closed, "rrl", "Churn Rate by Country  ·  lower is better",
                   countries=NEW_CHART_COUNTRIES[:3], alert=0.05, is_pct=True)
 
-    st.caption(f"KPI cards are Middle East aggregate as of **{asof_ts.strftime('%b %Y')}** (last closed month); "
-               f"delta is vs {yoy_lbl} (pp for rates, % for volumes). Snapshot is current month by market. "
+    # ---- interactive Gulf map ----
+    sec("Network Map", "Gulf markets shaded by the selected metric for the as-of month")
+    _map_opts = [
+        ("Occupancy", "occupancy", "pct"),
+        ("Occupied kitchens", "occupied_kitchens", "num"),
+        ("Live kitchens", "total_kitchens", "num"),
+        ("New CWs", "cws", "num"),
+        ("Net Adds", "net_adds", "num"),
+        ("RRA $ (k)", "rra_usd", "usdk"),
+    ]
+    mc1, _ = st.columns([1.4, 4.6])
+    with mc1:
+        _mlbl = st.selectbox("Map metric", [o[0] for o in _map_opts], index=0, key="ov_map_metric")
+    _mcol, _mkind = next((c, k) for (l, c, k) in _map_opts if l == _mlbl)
+    _map_cts = [c for c in ["Saudi Arabia", "UAE", "Kuwait", "Bahrain", "Qatar"]
+                if c in set(df["country"])]
+    _map_vals = []
+    for c in _map_cts:
+        r = df[(df["country"] == c) & (df["month_end"] == asof)]
+        try:
+            _map_vals.append(float(r[_mcol].iloc[0]) if (not r.empty and _mcol in r.columns) else 0.0)
+        except Exception:
+            _map_vals.append(0.0)
+    try:
+        _mfig = gulf_map(_map_cts, _map_vals, _mkind, f"{_mlbl} — {asof_ts.strftime('%b %Y')}", height=440)
+        st.plotly_chart(_mfig, use_container_width=True, config={"displayModeBar": False})
+    except Exception as _e:
+        st.info(f"Map unavailable ({type(_e).__name__}).")
+
+    st.caption(f"Everything on this tab reflects **{asof_ts.strftime('%b %Y')}** (change it above). "
+               f"KPI delta is vs {yoy_lbl} (pp for rates, % for volumes). "
                f"$ figures in thousands. Source: `{BRIDGE_TABLE}`.")
 
 
