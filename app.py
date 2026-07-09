@@ -2664,8 +2664,7 @@ def _inject_exec_css():
         /* KPI card strip */
         .xk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:10px;margin:12px 0 6px;}
         .xk{position:relative;background:#FBFAF6;border:1px solid #E0DCCE;border-radius:13px;
-            padding:12px 13px 11px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;cursor:pointer;}
-        .xk:active{transform:scale(.975);}
+            padding:12px 13px 11px;box-shadow:0 2px 10px rgba(33,54,43,.06);overflow:visible;}
         .xk.hi{background:#21362B;border-color:#21362B;}
         .xk.hi .xk-label{color:#9DB3A6;}
         .xk.hi .xk-num{color:#fff;}
@@ -2987,33 +2986,31 @@ def _render_overview_tab(df, all_months, cur_month_start):
         except Exception:
             return None
 
-    # ---- customizable cards: pick which metrics & which is highlighted ----
+    # ---- advanced card customization: which metrics, order, size ----
     if "ov_cards" not in st.session_state:
         st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
     with st.expander("⚙️ Customize cards", expanded=False):
-        _cc1, _cc2, _cc3 = st.columns([3, 1.3, 1])
+        _cc1, _cc2, _cc3 = st.columns([3.6, 1.5, 0.9])
         with _cc1:
-            st.multiselect("Metrics shown as cards", list(KPI_CATALOG.keys()),
-                           key="ov_cards", max_selections=8,
-                           help="Pick up to 8. Order follows the order you select them.")
+            st.multiselect("Metrics on cards", list(KPI_CATALOG.keys()), key="ov_cards",
+                           max_selections=8,
+                           help="Pick up to 8. Cards appear in the order you select them.")
         with _cc2:
-            _now = st.session_state.get("ov_cards") or list(KPI_DEFAULT_CARDS)
-            st.selectbox("Highlight", _now or list(KPI_DEFAULT_CARDS), key="ov_hilite")
+            _size = st.select_slider("Card size", options=["S", "M", "L"],
+                                     value=st.session_state.get("ov_card_size", "M"), key="ov_card_size")
         with _cc3:
             st.write("")
             st.write("")
             if st.button("Reset", use_container_width=True, key="ov_cards_reset"):
                 st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
-                st.session_state.pop("ov_hilite", None)
+                st.session_state["ov_card_size"] = "M"
                 st.rerun()
     chosen = st.session_state.get("ov_cards") or list(KPI_DEFAULT_CARDS)
     if not chosen:
         chosen = list(KPI_DEFAULT_CARDS)
-    hilite = st.session_state.get("ov_hilite")
-    if hilite not in chosen:
-        hilite = chosen[0]
+    _card_min = {"S": 118, "M": 148, "L": 190}.get(st.session_state.get("ov_card_size", "M"), 148)
 
-    cards = []
+    cards_html = []
     for label in chosen:
         col, kind, up_good = KPI_CATALOG[label]
         cur = _v(col, asof)
@@ -3022,65 +3019,47 @@ def _render_overview_tab(df, all_months, cur_month_start):
         mom = (cur - pv) if (cur is not None and pv is not None) else None
         yoy_d = (cur - yv) if (cur is not None and yv is not None) else None
         face_txt, cls, ar = _face_delta(cur, yv, kind, up_good)
-        # --- smart insight: current vs its trailing average over the window ---
+        # smart insight: current vs its trailing average
         _series = _exec_series(df, "Middle East", col, win)
         _hist = [v for v in _series[:-1] if v is not None]
         avg = (sum(_hist) / len(_hist)) if _hist else None
-        vs_txt, vs_cls = "no history", "n"
-        vs_good = None
+        vs_txt, vs_cls, vs_good = "no history", "n", None
         if avg is not None and cur is not None:
             d = cur - avg
             better = (d >= 0) if up_good else (d <= 0)
             vs_good = better
             _mo = len(_hist)
             arrow = "&#9650;" if d >= 0 else "&#9660;"
-            near = abs(d) < (abs(avg) * 0.005 + 1e-9)
-            if near:
+            if abs(d) < (abs(avg) * 0.005 + 1e-9):
                 vs_txt, vs_cls = f"&#8776; at {_mo}-mo avg", "n"
             else:
                 vs_txt = f"{arrow} {'above' if d >= 0 else 'below'} {_mo}-mo avg"
                 vs_cls = "g" if better else "r"
-        # health dot: combine YoY face direction with trailing-avg direction
-        _score = 0
-        if cls == "up":
-            _score += 1
-        elif cls == "dn":
-            _score -= 1
-        if vs_good is True:
-            _score += 1
-        elif vs_good is False:
-            _score -= 1
+        _score = (1 if cls == "up" else -1 if cls == "dn" else 0) + \
+                 (1 if vs_good is True else -1 if vs_good is False else 0)
         dot = "g" if _score > 0 else ("r" if _score < 0 else "a")
-        spark = _spark_svg(_series, "#fff" if label == hilite else "#5F8575")
-        hi = " hi" if label == hilite else ""
-        html = (
-            f'<div class="xk{hi}">'
+        spark = _spark_svg(_series, "#5F8575")
+        narr = f"{label} across the ME network. MoM {_kdelta_txt(mom, kind)}, YoY {_kdelta_txt(yoy_d, kind)}."
+        cards_html.append(
+            '<div class="xk">'
             f'<span class="xk-dot {dot}"></span>'
             f'<p class="xk-label">{label}</p>'
             f'<p class="xk-num">{_kfmt(cur, kind)}</p>'
             f'<p class="xk-dl"><span class="{cls}">{ar} {face_txt}</span>'
             f'<span style="color:#A79E8B;font-weight:600"> vs {yoy_lbl}</span></p>'
             f'<p class="xk-smart"><span class="{vs_cls}">{vs_txt}</span></p>'
-            f'{spark}</div>'
+            f'{spark}'
+            '<div class="xk-tip">'
+            f'<div class="xk-tip-row"><span>MoM vs {prev_lbl}</span><b>{_kdelta_txt(mom, kind)}</b></div>'
+            f'<div class="xk-tip-row"><span>YoY vs {yoy_lbl}</span><b>{_kdelta_txt(yoy_d, kind)}</b></div>'
+            f'<div class="xk-tip-txt">{narr}</div></div></div>'
         )
-        cards.append((label, col, kind, up_good, html))
-
-    # Render cards in rows of up to 7 columns; each has a Details button that opens the
-    # shared drill-down popover for that metric (Middle East, at the selected month).
-    st.caption("Click **Details** on any card — or any number in the Scorecard below — for its trend, percentile and comparisons.")
-    _per_row = 7
-    for _s in range(0, len(cards), _per_row):
-        _chunk = cards[_s:_s + _per_row]
-        _ccols = st.columns(len(_chunk))
-        for (label, col, kind, up_good, html), _ccol in zip(_chunk, _ccols):
-            with _ccol:
-                st.markdown(html, unsafe_allow_html=True)
-                if st.button("Details", key=f"ov_kpi_{label}", use_container_width=True):
-                    st.session_state["_ov_dd"] = {
-                        "market": "Middle East", "label": label, "col": col,
-                        "kind": kind, "up_good": up_good, "month": asof,
-                    }
-                    st.session_state.pop("_sc_last_sig", None)
+    st.caption("Hover a card for MoM &amp; YoY. Click any number in the **Scorecard** below for its trend, percentile and comparisons.")
+    st.markdown(
+        f'<div class="xk-grid" style="grid-template-columns:repeat(auto-fit,minmax({_card_min}px,1fr))">'
+        + "".join(cards_html) + "</div>",
+        unsafe_allow_html=True,
+    )
 
     # ---- All-Hands country snapshot ----
     _render_country_snapshot(df, asof)
@@ -3617,82 +3596,57 @@ def _render_overview_charts_extra(df, months_closed, asof):
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-_DD_DRAG_JS = """
-<script>
-(function(){
-  var card=document.getElementById('ddcard'), h=document.getElementById('ddhandle');
-  if(!card||!h) return;
-  var sx,sy,ox,oy,drag=false;
-  function down(e){var t=(e.touches?e.touches[0]:e);drag=true;sx=t.clientX;sy=t.clientY;
-    ox=card.offsetLeft;oy=card.offsetTop;e.preventDefault();}
-  function move(e){if(!drag)return;var t=(e.touches?e.touches[0]:e);
-    card.style.left=(ox+t.clientX-sx)+'px';card.style.top=Math.max(0,oy+t.clientY-sy)+'px';}
-  function up(){drag=false;}
-  h.addEventListener('mousedown',down);window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
-  h.addEventListener('touchstart',down,{passive:false});window.addEventListener('touchmove',move,{passive:false});
-  window.addEventListener('touchend',up);
-  var c=document.getElementById('ddclose');
-  if(c)c.addEventListener('click',function(){card.style.display='none';});
-})();
-</script>
-"""
-
-_DD_CARD_CSS = """
-<style>
-*{box-sizing:border-box;margin:0;}
-body{background:transparent;font-family:Calibri,'Segoe UI',system-ui,sans-serif;}
-.ddcard{position:absolute;left:14px;top:10px;width:440px;max-width:calc(100% - 24px);
+# CSS for the floating drill-down card. Injected (via JS) into the PARENT document so the
+# card can be dragged anywhere over the whole page, not just within a component frame.
+# All selectors scoped under #nmdd so they can't affect the rest of the app.
+_DD_CARD_CSS_INNER = """
+#nmdd *{box-sizing:border-box;margin:0;font-family:Calibri,'Segoe UI',system-ui,sans-serif;}
+#nmdd .ddcard{position:fixed;top:88px;right:26px;width:430px;max-width:92vw;
   background:#FCFBF7;border:1px solid #E0DCCE;border-radius:16px;
-  box-shadow:0 18px 50px rgba(33,54,43,.22);padding:0 20px 20px;
-  animation:cardin .35s cubic-bezier(.2,.8,.2,1) both;}
-@keyframes cardin{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
-.hd{display:flex;align-items:flex-start;gap:10px;padding:16px 0 12px;cursor:grab;
+  box-shadow:0 22px 60px rgba(33,54,43,.30);padding:0 20px 20px;
+  z-index:2147483000;animation:nmdd-in .3s ease both;}
+@keyframes nmdd-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+#nmdd .hd{display:flex;align-items:flex-start;gap:10px;padding:16px 0 12px;cursor:grab;
   border-bottom:1px solid #E7E3D8;user-select:none;}
-.hd:active{cursor:grabbing;}
-.grip{color:#C7C1B0;font-weight:900;font-size:1.05rem;line-height:1.2;letter-spacing:-4px;}
-.hg{flex:1;border-left:4px solid #3F7A52;padding-left:11px;}
-.ttl{font-weight:800;font-size:1.14rem;color:#21362B;}
-.scope{font-size:.82rem;color:#5B6B5E;font-weight:600;margin-top:2px;}
-.badge{font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#8A9A8C;margin-top:6px;}
-.cls{cursor:pointer;color:#9A9382;font-size:1.35rem;line-height:1;padding:0 4px;}
-.cls:hover{color:#21362B;}
-.value{font-family:Calibri,'Segoe UI',sans-serif;font-size:2.8rem;font-weight:700;color:#21362B;
-  display:inline-block;background:#EDEAE1;padding:2px 14px;border-radius:9px;margin:16px 0 10px;}
-.pill{display:inline-block;background:#E7F3EA;color:#2E7D4E;font-weight:800;font-size:.82rem;
+#nmdd .hd:active{cursor:grabbing;}
+#nmdd .grip{color:#C7C1B0;font-weight:900;font-size:1.05rem;line-height:1.2;letter-spacing:-4px;}
+#nmdd .hg{flex:1;border-left:4px solid #3F7A52;padding-left:11px;}
+#nmdd .ttl{font-weight:800;font-size:1.14rem;color:#21362B;}
+#nmdd .scope{font-size:.82rem;color:#5B6B5E;font-weight:600;margin-top:2px;}
+#nmdd .badge{font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#8A9A8C;margin-top:6px;}
+#nmdd .cls{cursor:pointer;color:#9A9382;font-size:1.35rem;line-height:1;padding:0 4px;}
+#nmdd .cls:hover{color:#21362B;}
+#nmdd .value{font-size:2.8rem;font-weight:700;color:#21362B;display:inline-block;background:#EDEAE1;
+  padding:2px 14px;border-radius:9px;margin:16px 0 10px;}
+#nmdd .pill{display:inline-block;background:#E7F3EA;color:#2E7D4E;font-weight:800;font-size:.82rem;
   padding:7px 16px;border-radius:999px;border:1px solid #B7DCC2;}
-.sec{display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px;}
-.sl{background:#E7E3D8;color:#6B6656;font-size:.62rem;font-weight:800;letter-spacing:.09em;padding:3px 8px;border-radius:4px;}
-.hint{font-size:.72rem;font-style:italic;color:#A79E8B;}
-.spark{display:block;}
-.xlab{display:flex;justify-content:space-between;font-size:.7rem;color:#A79E8B;font-weight:700;margin-top:2px;}
-.track{position:relative;height:7px;border-radius:5px;background:#E6E2D6;margin-top:4px;}
-.fill{position:absolute;left:0;top:0;height:100%;border-radius:5px;background:#3F7A52;
-  animation:fillin .8s cubic-bezier(.2,.85,.25,1) both;transform-origin:left;}
-.track>i{position:absolute;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;
-  background:#fff;border:4px solid #3F7A52;box-shadow:0 2px 7px rgba(33,54,43,.28);
-  animation:thumbin .8s .05s cubic-bezier(.2,.85,.25,1) both;}
-@keyframes fillin{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes thumbin{from{left:0!important}}
-.scale{display:flex;justify-content:space-between;align-items:center;margin-top:12px;
+#nmdd .sec{display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px;}
+#nmdd .sl{background:#E7E3D8;color:#6B6656;font-size:.62rem;font-weight:800;letter-spacing:.09em;padding:3px 8px;border-radius:4px;}
+#nmdd .hint{font-size:.72rem;font-style:italic;color:#A79E8B;}
+#nmdd .spark{display:block;}
+#nmdd .xlab{display:flex;justify-content:space-between;font-size:.7rem;color:#A79E8B;font-weight:700;margin-top:2px;}
+#nmdd .track{position:relative;height:7px;border-radius:5px;background:#E6E2D6;margin-top:4px;}
+#nmdd .fill{position:absolute;left:0;top:0;height:100%;border-radius:5px;background:#3F7A52;
+  animation:nmdd-fill .8s cubic-bezier(.2,.85,.25,1) both;transform-origin:left;}
+#nmdd .track>i{position:absolute;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;
+  background:#fff;border:4px solid #3F7A52;box-shadow:0 2px 7px rgba(33,54,43,.28);}
+@keyframes nmdd-fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+#nmdd .scale{display:flex;justify-content:space-between;align-items:center;margin-top:12px;
   font-size:.66rem;color:#A79E8B;font-weight:800;letter-spacing:.05em;}
-.scale b{color:#21362B;font-size:.9rem;letter-spacing:0;}
-.scale2{display:flex;justify-content:space-between;margin-top:2px;font-size:.78rem;font-weight:700;color:#55604F;}
-.cmp{display:flex;align-items:center;padding:11px 14px;margin-bottom:5px;font-size:.86rem;
-  background:#F5F2EA;border-radius:9px;animation:rise .4s both;}
-.cmp:nth-child(1){animation-delay:.05s}.cmp:nth-child(2){animation-delay:.11s}
-.cmp:nth-child(3){animation-delay:.17s}.cmp:nth-child(4){animation-delay:.23s}
-@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.cl{flex:1;color:#55604F;font-weight:600;}
-.cv{font-family:Calibri,'Segoe UI',sans-serif;font-weight:700;color:#21362B;background:#EAE7DD;
-  padding:2px 9px;border-radius:5px;margin-right:12px;min-width:66px;text-align:right;}
-.cd{width:82px;text-align:right;font-weight:800;font-size:.82rem;}
-.cd.up{color:#2E7D4E;}.cd.dn{color:#B4472E;}
-</style>
+#nmdd .scale b{color:#21362B;font-size:.9rem;letter-spacing:0;}
+#nmdd .scale2{display:flex;justify-content:space-between;margin-top:2px;font-size:.78rem;font-weight:700;color:#55604F;}
+#nmdd .cmp{display:flex;align-items:center;padding:11px 14px;margin-bottom:5px;font-size:.86rem;
+  background:#F5F2EA;border-radius:9px;}
+#nmdd .cl{flex:1;color:#55604F;font-weight:600;}
+#nmdd .cv{font-weight:700;color:#21362B;background:#EAE7DD;padding:2px 9px;border-radius:5px;
+  margin-right:12px;min-width:66px;text-align:right;}
+#nmdd .cd{width:82px;text-align:right;font-weight:800;font-size:.82rem;}
+#nmdd .cd.up{color:#2E7D4E;}#nmdd .cd.dn{color:#B4472E;}
 """
 
 
-def _build_drilldown_html(df, market, mlabel, col, kind, up_good, win, idx):
-    """Self-contained draggable drill-down card (matches the reference shape)."""
+def _build_drilldown_card_inner(df, market, mlabel, col, kind, up_good, win, idx):
+    """Inner HTML for the floating drill-down card (injected into the parent document)."""
     vals = _exec_series(df, market, col, win)
     labels = [pd.Timestamp(m).strftime("%b %Y") for m in win]
     labels_sh = [pd.Timestamp(m).strftime("%b '%y") for m in win]
@@ -3764,44 +3718,78 @@ def _build_drilldown_html(df, market, mlabel, col, kind, up_good, win, idx):
                   f'<span class="cd {dcls}">{dtxt}</span></div>')
 
     card = (
-        '<div id="ddcard" class="ddcard">'
-        '<div id="ddhandle" class="hd"><span class="grip">&#8942;&#8942;</span>'
+        '<div id="nmdd-card" class="ddcard">'
+        '<div id="nmdd-handle" class="hd"><span class="grip">&#8942;&#8942;</span>'
         f'<div class="hg"><div class="ttl">{mlabel}</div>'
         f'<div class="scope">{market} &middot; {labels[idx]}</div>'
         '<div class="badge">LIVE DATA &middot; RECOMPUTED FROM EXTRACT</div></div>'
-        '<span id="ddclose" class="cls">&times;</span></div>'
+        '<span id="nmdd-close" class="cls">&times;</span></div>'
         f'<div class="value">{_kfmt(v, kind)}</div>{pill}'
         '<div class="sec"><span class="sl">16-MONTH TREND</span>'
-        '<span class="hint">drag the header &middot; click = this point</span></div>'
+        '<span class="hint">drag anywhere &middot; click = this point</span></div>'
         f'{trend}<div class="xlab"><span>{x0}</span><span>{x1}</span></div>'
         f'{perc}'
         '<div class="sec"><span class="sl">COMPARISONS</span></div>'
         f'{crows}</div>'
     )
-    return _DD_CARD_CSS + card + _DD_DRAG_JS
+    return card
 
 
 def _maybe_render_overview_dd(df, months_closed):
-    """Render the draggable drill-down card if a card/scorecard cell requested it."""
-    pay = st.session_state.get("_ov_dd")
-    if not isinstance(pay, dict):
-        return
+    """Mount (or clear) the floating, drag-anywhere drill-down card. The card is injected
+    into the PARENT document via a zero-height component so it floats over the whole page."""
+    import json
     import streamlit.components.v1 as components
+    pay = st.session_state.get("_ov_dd")
+
+    if not isinstance(pay, dict):
+        # No selection: make sure no stale card is left floating in the parent DOM.
+        components.html(
+            "<script>(function(){try{var d=window.parent.document;"
+            "var o=d.getElementById('nmdd');if(o)o.remove();"
+            "var c=d.getElementById('nmdd-css');if(c)c.remove();}catch(e){}})();</script>",
+            height=0,
+        )
+        return
+
     month = pay.get("month")
     upto = [m for m in months_closed if pd.Timestamp(m) <= pd.Timestamp(month)] or list(months_closed)
     win = upto[-16:]
     if not win:
         return
     idx = len(win) - 1
-    _cA, _cB = st.columns([4, 1])
+    sig = f'{pay["market"]}|{pay["label"]}|{pd.Timestamp(win[idx]).strftime("%Y-%m")}'
+    card_html = _build_drilldown_card_inner(df, pay["market"], pay["label"], pay["col"],
+                                            pay["kind"], pay["up_good"], win, idx)
+
+    _cA, _cB = st.columns([5, 1])
     with _cB:
-        if st.button("✕ Close details", key="ov_dd_close", use_container_width=True):
+        if st.button("✕ Close", key="ov_dd_close", use_container_width=True):
             st.session_state.pop("_ov_dd", None)
             st.session_state.pop("_sc_last_sig", None)
             st.rerun()
-    html = _build_drilldown_html(df, pay["market"], pay["label"], pay["col"],
-                                 pay["kind"], pay["up_good"], win, idx)
-    components.html(html, height=720, scrolling=False)
+
+    js = (
+        "<script>(function(){var d=window.parent.document;var SIG=" + json.dumps(sig) + ";try{"
+        "if(window.__nmddClosed===SIG){var o0=d.getElementById('nmdd');if(o0)o0.remove();"
+        "var c0=d.getElementById('nmdd-css');if(c0)c0.remove();return;}"
+        "var oc=d.getElementById('nmdd');if(oc)oc.remove();"
+        "var os=d.getElementById('nmdd-css');if(os)os.remove();"
+        "var s=d.createElement('style');s.id='nmdd-css';s.textContent=" + json.dumps(_DD_CARD_CSS_INNER) + ";d.head.appendChild(s);"
+        "var w=d.createElement('div');w.id='nmdd';w.innerHTML=" + json.dumps(card_html) + ";d.body.appendChild(w);"
+        "var card=d.getElementById('nmdd-card'),h=d.getElementById('nmdd-handle');"
+        "var sx,sy,ox,oy,drag=false;"
+        "function dn(e){var t=(e.touches?e.touches[0]:e);drag=true;sx=t.clientX;sy=t.clientY;"
+        "var r=card.getBoundingClientRect();ox=r.left;oy=r.top;card.style.right='auto';e.preventDefault();}"
+        "function mv(e){if(!drag)return;var t=(e.touches?e.touches[0]:e);"
+        "card.style.left=(ox+t.clientX-sx)+'px';card.style.top=Math.max(0,oy+t.clientY-sy)+'px';}"
+        "function up(){drag=false;}"
+        "h.addEventListener('mousedown',dn);d.addEventListener('mousemove',mv);d.addEventListener('mouseup',up);"
+        "h.addEventListener('touchstart',dn,{passive:false});d.addEventListener('touchmove',mv,{passive:false});d.addEventListener('touchend',up);"
+        "var cl=d.getElementById('nmdd-close');if(cl)cl.onclick=function(){window.__nmddClosed=SIG;w.remove();s.remove();};"
+        "}catch(e){}})();</script>"
+    )
+    components.html(js, height=0)
 
 
 # ---------------------------------------------------------------- main
