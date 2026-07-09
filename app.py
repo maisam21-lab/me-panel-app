@@ -404,13 +404,13 @@ def _go():
 
 def _base_layout(fig, title, height=340):
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="#21362B", family="Fraunces, Georgia, serif")),
+        title=dict(text=title, font=dict(size=14, color="#21362B", family="Calibri, 'Segoe UI', sans-serif")),
         height=height,
         margin=dict(l=8, r=8, t=44, b=4),
         legend=dict(orientation="h", y=-0.22, font=dict(size=11)),
         plot_bgcolor="white", paper_bgcolor="white",
         hovermode="x unified",
-        font=dict(family="Inter, sans-serif", size=11, color="#334155"),
+        font=dict(family="Calibri, sans-serif", size=11, color="#334155"),
     )
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="#E7E4D8", griddash="dot", zerolinecolor="#D9D5C5")
@@ -698,7 +698,7 @@ def gulf_map(cts, vals, kind, title, height=470):
                         showcountries=True, countrycolor="#DAD6C8",
                         showland=True, landcolor="#F8F7F2")
     fig.update_layout(
-        title=dict(text=title, font=dict(size=14, color="#21362B", family="Fraunces, Georgia, serif")),
+        title=dict(text=title, font=dict(size=14, color="#21362B", family="Calibri, 'Segoe UI', sans-serif")),
         height=height, margin=dict(l=4, r=4, t=44, b=4), paper_bgcolor="white",
         showlegend=False)
     return fig
@@ -729,7 +729,7 @@ def donut(value, color, delta=None, height=168):
     fig = go.Figure(go.Pie(values=[v01, 1 - v01], hole=0.74, sort=False, direction="clockwise",
                            marker=dict(colors=[color, LIGHT]), textinfo="none", hoverinfo="skip"))
     fig.add_annotation(text=f"<b>{v * 100:.0f}%</b>", showarrow=False,
-                       font=dict(size=22, color="#21362B", family="Fraunces, Georgia, serif"))
+                       font=dict(size=22, color="#21362B", family="Calibri, 'Segoe UI', sans-serif"))
     fig.update_layout(height=height, margin=dict(l=6, r=6, t=6, b=0),
                       showlegend=False, paper_bgcolor="white")
     return fig
@@ -2627,13 +2627,11 @@ def _inject_exec_css():
     st.markdown(
         """
         <style>
-        /* Rich serif for headline numbers (Fraunces), clean sans for UI (Inter).
-           Both fall back gracefully to system fonts if the CDN is blocked. */
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@500;600;700;800&display=swap');
-        :root{--nm-serif:"Fraunces",Georgia,"Times New Roman",serif;
-              --nm-sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;}
-        /* One type system across the whole panel: Inter for UI, Fraunces for headline
-           numbers/titles. Set on the app root + form controls; everything else inherits.
+        /* One body font everywhere: Calibri, with graceful fallbacks. */
+        :root{--nm-serif:"Calibri","Segoe UI",system-ui,-apple-system,sans-serif;
+              --nm-sans:"Calibri","Segoe UI",system-ui,-apple-system,sans-serif;}
+        /* One type system across the whole panel: Calibri everywhere.
+           Set on the app root + form controls; everything else inherits.
            Icon fonts set their own family, so they're unaffected. */
         .stApp, .stApp button, .stApp input, .stApp select, .stApp textarea,
         .stApp [data-baseweb="select"], .stApp [data-testid="stMarkdownContainer"]{
@@ -2879,7 +2877,7 @@ def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=No
                 x=[last[0]], y=[last[1]], mode="markers+text",
                 marker=dict(size=7, color="white", line=dict(color=color, width=2.2)),
                 text=[fmt(last[1], _vk)], textposition="middle right",
-                textfont=dict(size=10, color=color, family="Inter, Arial"),
+                textfont=dict(size=10, color=color, family="Calibri, sans-serif"),
                 showlegend=False, hoverinfo="skip", cliponaxis=False,
             ))
     if alert is not None:
@@ -2887,11 +2885,11 @@ def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=No
                       annotation_text=f"{alert * 100:.0f}% threshold", annotation_position="top right",
                       annotation_font=dict(size=10, color="#B4472E"))
     fig.update_layout(
-        title=dict(text=title, font=dict(size=15, color="#21362B", family="Fraunces, Georgia, serif")),
+        title=dict(text=title, font=dict(size=15, color="#21362B", family="Calibri, 'Segoe UI', sans-serif")),
         height=360, margin=dict(l=10, r=48, t=42, b=6),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", y=-0.18, font=dict(size=11, color="#55604F")),
-        hovermode="x unified", font=dict(family="Inter, Arial", size=11, color="#55604F"),
+        hovermode="x unified", font=dict(family="Calibri, sans-serif", size=11, color="#55604F"),
     )
     # visible rulers: axis lines + outside ticks on both axes
     fig.update_xaxes(showline=True, linecolor="#C9C3B2", linewidth=1.2, ticks="outside",
@@ -3317,7 +3315,7 @@ def _render_metric_drilldown_body(df, market, mlabel, col, kind, up_good, months
         fig.add_vline(x=idx, line=dict(color="#5F8575", width=1, dash="dot"))
     fig.update_layout(height=150, margin=dict(l=6, r=6, t=6, b=4),
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                      showlegend=False, font=dict(family="Inter, Arial", size=9, color="#A79E8B"))
+                      showlegend=False, font=dict(family="Calibri, sans-serif", size=9, color="#A79E8B"))
     fig.update_xaxes(showgrid=False, tickfont=dict(size=9, color="#A79E8B"), nticks=6)
     fig.update_yaxes(visible=False)
     st.markdown('<div class="dd-sec"><span class="dd-sec-l">16-MONTH TREND</span>'
@@ -3545,7 +3543,7 @@ def _render_overview_charts_extra(df, months_closed, asof):
         barmode="relative", height=360, margin=dict(l=10, r=10, t=10, b=6),
         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", y=-0.16, font=dict(size=11, color="#55604F")),
-        hovermode="x unified", font=dict(family="Inter, Arial", size=11, color="#55604F"),
+        hovermode="x unified", font=dict(family="Calibri, sans-serif", size=11, color="#55604F"),
         bargap=0.28)
     fig.add_hline(y=0, line=dict(color="#C9C3B2", width=1))
     fig.update_xaxes(showline=True, linecolor="#C9C3B2", ticks="outside", tickcolor="#C9C3B2",
@@ -3576,7 +3574,7 @@ def _render_overview_charts_extra(df, months_closed, asof):
             marker_line_color="white", marker_line_width=1))
         fig.update_layout(height=300, margin=dict(l=6, r=60, t=8, b=6),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                          font=dict(family="Inter, Arial", size=11, color="#55604F"), showlegend=False)
+                          font=dict(family="Calibri, sans-serif", size=11, color="#55604F"), showlegend=False)
         fig.update_xaxes(visible=False)
         fig.update_yaxes(showline=False, tickfont=dict(size=12, color="#21362B"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -3613,7 +3611,7 @@ def _render_overview_charts_extra(df, months_closed, asof):
             showscale=False, xgap=3, ygap=3, hoverinfo="skip"))
         fig.update_layout(height=300, margin=dict(l=6, r=6, t=8, b=6),
                           plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                          font=dict(family="Inter, Arial", size=10, color="#55604F"))
+                          font=dict(family="Calibri, sans-serif", size=10, color="#55604F"))
         fig.update_xaxes(tickfont=dict(size=9, color="#7C776A"), side="top")
         fig.update_yaxes(tickfont=dict(size=11, color="#21362B"), autorange="reversed")
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -3641,9 +3639,8 @@ _DD_DRAG_JS = """
 
 _DD_CARD_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@600;700;800&display=swap');
 *{box-sizing:border-box;margin:0;}
-body{background:transparent;font-family:'Inter',system-ui,sans-serif;}
+body{background:transparent;font-family:Calibri,'Segoe UI',system-ui,sans-serif;}
 .ddcard{position:absolute;left:14px;top:10px;width:440px;max-width:calc(100% - 24px);
   background:#FCFBF7;border:1px solid #E0DCCE;border-radius:16px;
   box-shadow:0 18px 50px rgba(33,54,43,.22);padding:0 20px 20px;
@@ -3659,7 +3656,7 @@ body{background:transparent;font-family:'Inter',system-ui,sans-serif;}
 .badge{font-size:.6rem;font-weight:800;letter-spacing:.08em;color:#8A9A8C;margin-top:6px;}
 .cls{cursor:pointer;color:#9A9382;font-size:1.35rem;line-height:1;padding:0 4px;}
 .cls:hover{color:#21362B;}
-.value{font-family:'Fraunces',Georgia,serif;font-size:2.8rem;font-weight:700;color:#21362B;
+.value{font-family:Calibri,'Segoe UI',sans-serif;font-size:2.8rem;font-weight:700;color:#21362B;
   display:inline-block;background:#EDEAE1;padding:2px 14px;border-radius:9px;margin:16px 0 10px;}
 .pill{display:inline-block;background:#E7F3EA;color:#2E7D4E;font-weight:800;font-size:.82rem;
   padding:7px 16px;border-radius:999px;border:1px solid #B7DCC2;}
@@ -3686,7 +3683,7 @@ body{background:transparent;font-family:'Inter',system-ui,sans-serif;}
 .cmp:nth-child(3){animation-delay:.17s}.cmp:nth-child(4){animation-delay:.23s}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .cl{flex:1;color:#55604F;font-weight:600;}
-.cv{font-family:'Fraunces',Georgia,serif;font-weight:700;color:#21362B;background:#EAE7DD;
+.cv{font-family:Calibri,'Segoe UI',sans-serif;font-weight:700;color:#21362B;background:#EAE7DD;
   padding:2px 9px;border-radius:5px;margin-right:12px;min-width:66px;text-align:right;}
 .cd{width:82px;text-align:right;font-weight:800;font-size:.82rem;}
 .cd.up{color:#2E7D4E;}.cd.dn{color:#B4472E;}
