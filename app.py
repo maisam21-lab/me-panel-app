@@ -2964,6 +2964,26 @@ def _render_clickable_snapshot(df, asof, *, key_prefix="ovsnap"):
                                           "kind": kind, "up_good": up_good, "month": asof}
 
 
+def _render_clickable_matrix(df, months_closed, asof, *, key_prefix="ovm"):
+    """One clickable table with a toggle: markets×metrics for this month, or
+    metrics×months for one market. Both feed the same drill-down card."""
+    sec("Data Explorer", "Compare markets this month, or trend one market over time — click any number to drill in")
+    view_opts = ["By market · this month", "By month · one market"]
+    _seg = getattr(st, "segmented_control", None)
+    _c1, _c2 = st.columns([2.6, 5])
+    with _c1:
+        if callable(_seg):
+            view = _seg("View", view_opts, default=view_opts[0],
+                        key=f"{key_prefix}_view", label_visibility="collapsed")
+        else:
+            view = st.radio("View", view_opts, horizontal=True,
+                            key=f"{key_prefix}_view", label_visibility="collapsed")
+    if (view or view_opts[0]) == view_opts[0]:
+        _render_clickable_snapshot(df, asof, key_prefix=f"{key_prefix}_snap")
+    else:
+        _render_clickable_scorecard(df, months_closed, key_prefix=f"{key_prefix}_sc")
+
+
 def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=None,
                   is_pct=True, val_kind=None):
     """Smooth country lines with visible axis rulers + end-of-line value labels."""
@@ -3190,12 +3210,8 @@ def _render_overview_tab(df, all_months, cur_month_start):
         unsafe_allow_html=True,
     )
 
-    # ---- clickable country snapshot: every number opens the drill-down ----
-    _render_clickable_snapshot(df, asof)
-
-    # ---- clickable scorecard: every number opens the same drill-down ----
-    sec("Scorecard", "Click any number for its trend, percentile and comparisons")
-    _render_clickable_scorecard(df, months_closed, key_prefix="ov")
+    # ---- one clickable Data Explorer (markets-this-month OR one-market-over-time) ----
+    _render_clickable_matrix(df, months_closed, asof)
 
     # ---- one shared drill-down dialog (from cards or scorecard) ----
     _maybe_render_overview_dd(df, months_closed)
