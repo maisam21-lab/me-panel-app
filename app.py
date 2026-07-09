@@ -2862,6 +2862,108 @@ def _render_country_snapshot(df, asof, *, title="Country Snapshot", cols=None, r
     )
 
 
+def _render_clickable_snapshot(df, asof, *, key_prefix="ovsnap"):
+    """Country snapshot as a clickable green table: every number opens the shared
+    drill-down card (market × metric for the as-of month). Keeps flags + colors."""
+    asof_lbl = pd.Timestamp(asof).strftime("%b %Y")
+    st.markdown(f'<p class="snap-h">Country Snapshot &mdash; {asof_lbl}</p>'
+                '<p class="snap-sub">Key metrics by market — click any number for its drill-down</p>',
+                unsafe_allow_html=True)
+    markets = [m for m in SNAP_ROWS if m in set(df["country"])]
+    metrics = SNAP_COLS  # (header, col, kind, colored, is_bar)
+    headers = [h for (h, *_ ) in metrics]
+
+    def gv(region, col):
+        r = df[(df["country"] == region) & (df["month_end"] == asof)]
+        if r.empty or col not in r.columns:
+            return None
+        try:
+            x = float(r[col].iloc[0])
+            return None if math.isnan(x) else x
+        except Exception:
+            return None
+
+    disp_rows = []
+    for region in markets:
+        row = [f"{SNAP_FLAG.get(region, '')} {region}"]
+        for (h, col, kind, colored, is_bar) in metrics:
+            row.append(_kfmt(gv(region, col), kind))
+        disp_rows.append(row)
+    disp = pd.DataFrame(disp_rows, columns=["Market"] + headers)
+
+    def _css(_):
+        out = pd.DataFrame("", index=disp.index, columns=disp.columns)
+        for ci, (h, col, kind, colored, is_bar) in enumerate(metrics):
+            colvals = [gv(m, col) for m in markets]
+            hv = [x for x in colvals if x is not None]
+            mn, mx = (min(hv), max(hv)) if hv else (0.0, 1.0)
+            up = colored not in ("churn", "loss")
+            for ri, region in enumerate(markets):
+                v = colvals[ri]
+                if v is None:
+                    continue
+                if colored == "churn" and v >= 0.05:
+                    out.iloc[ri, ci + 1] = "color:#B4472E;font-weight:700;"
+                    continue
+                if colored == "loss":
+                    out.iloc[ri, ci + 1] = "color:#B4472E;"
+                    continue
+                if colored == "signed":
+                    out.iloc[ri, ci + 1] = "color:%s;font-weight:700;" % ("#2E7D4E" if v >= 0 else "#B4472E")
+                    continue
+                t = 0.0 if mx == mn else (v - mn) / (mx - mn)
+                if not up:
+                    t = 1 - t
+                out.iloc[ri, ci + 1] = f"background-color:rgba(95,133,117,{0.05 + 0.28 * t:.2f});color:#21362B;"
+        for ri, region in enumerate(markets):
+            out.iloc[ri, 0] = ("font-weight:800;color:#21362B;"
+                               + ("background-color:#F1EFE7;" if region == "Middle East" else ""))
+        return out
+
+    styler = disp.style.apply(_css, axis=None)
+    try:
+        styler = styler.hide(axis="index")
+    except Exception:
+        pass
+    sel = None
+    try:
+        sel = st.dataframe(styler, use_container_width=True, hide_index=True,
+                           key=f"{key_prefix}_df", on_select="rerun", selection_mode="single-cell")
+    except TypeError:
+        st.dataframe(styler, use_container_width=True, hide_index=True)
+
+    rix = cix = None
+    if sel is not None:
+        s = getattr(sel, "selection", None)
+        sd = {}
+        if hasattr(s, "to_dict"):
+            try:
+                sd = dict(s.to_dict())
+            except Exception:
+                sd = {}
+        elif isinstance(s, dict):
+            sd = dict(s)
+        cells = list(sd.get("cells", []) or [])
+        if cells:
+            c0 = cells[0]
+            if isinstance(c0, dict):
+                rix, cix = c0.get("row"), c0.get("column")
+            elif isinstance(c0, (list, tuple)) and len(c0) >= 2:
+                rix, cix = c0[0], c0[1]
+    if isinstance(cix, str):
+        allc = ["Market"] + headers
+        cix = allc.index(cix) if cix in allc else None
+    if rix is not None and cix is not None and int(cix) >= 1 and int(rix) < len(markets):
+        h, col, kind, colored, is_bar = metrics[int(cix) - 1]
+        region = markets[int(rix)]
+        up_good = colored not in ("churn", "loss")
+        sig = f"snap|{region}|{int(cix)}"
+        if st.session_state.get("_snap_last_sig") != sig:
+            st.session_state["_snap_last_sig"] = sig
+            st.session_state["_ov_dd"] = {"market": region, "label": h, "col": col,
+                                          "kind": kind, "up_good": up_good, "month": asof}
+
+
 def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=None,
                   is_pct=True, val_kind=None):
     """Smooth country lines with visible axis rulers + end-of-line value labels."""
@@ -3088,8 +3190,8 @@ def _render_overview_tab(df, all_months, cur_month_start):
         unsafe_allow_html=True,
     )
 
-    # ---- All-Hands country snapshot ----
-    _render_country_snapshot(df, asof)
+    # ---- clickable country snapshot: every number opens the drill-down ----
+    _render_clickable_snapshot(df, asof)
 
     # ---- clickable scorecard: every number opens the same drill-down ----
     sec("Scorecard", "Click any number for its trend, percentile and comparisons")
