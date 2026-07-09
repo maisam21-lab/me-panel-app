@@ -2892,24 +2892,17 @@ def _render_clickable_snapshot(df, asof, *, key_prefix="ovsnap"):
     disp = pd.DataFrame(disp_rows, columns=["Market"] + headers)
 
     def _css(_):
+        # Uniform green tint for every column (higher = greener), direction-aware so
+        # "lower is better" metrics (churn rate, RRL) invert.
         out = pd.DataFrame("", index=disp.index, columns=disp.columns)
         for ci, (h, col, kind, colored, is_bar) in enumerate(metrics):
             colvals = [gv(m, col) for m in markets]
             hv = [x for x in colvals if x is not None]
             mn, mx = (min(hv), max(hv)) if hv else (0.0, 1.0)
             up = colored not in ("churn", "loss")
-            for ri, region in enumerate(markets):
+            for ri in range(len(markets)):
                 v = colvals[ri]
                 if v is None:
-                    continue
-                if colored == "churn" and v >= 0.05:
-                    out.iloc[ri, ci + 1] = "color:#B4472E;font-weight:700;"
-                    continue
-                if colored == "loss":
-                    out.iloc[ri, ci + 1] = "color:#B4472E;"
-                    continue
-                if colored == "signed":
-                    out.iloc[ri, ci + 1] = "color:%s;font-weight:700;" % ("#2E7D4E" if v >= 0 else "#B4472E")
                     continue
                 t = 0.0 if mx == mn else (v - mn) / (mx - mn)
                 if not up:
