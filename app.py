@@ -2601,6 +2601,13 @@ KPI_CATALOG = {
     "NRRA %":            ("nrra",             "pct",  True),
     "Gross RR $":        ("gross_rr_usd",     "kusd", True),
     "TCV $":             ("tcv_usd",          "kusd", True),
+    "Approved TCV $":    ("approved_tcv_usd", "kusd", True),
+    "RR after MKO/MFO $": ("rr_after_mko_mfo_usd", "kusd", True),
+    "Live-Sold w/ Appr.": ("live_sold_rate_approved", "pct", True),
+    "New Occupied Kx":   ("new_occupied_k",   "num",  True),
+    "CWs excl. delayed": ("cws_excl_delayed_transfer", "num", True),
+    "AE TCV Prod.":      ("sales_team_tcv_productivity", "num1", True),
+    "Churns (count)":    ("churns_excl_transfers", "num", False),
 }
 KPI_DEFAULT_CARDS = [lbl for lbl, *_ in NEW_KPIS]
 
@@ -2648,6 +2655,9 @@ def _inject_exec_css():
             padding:3px 10px;min-height:0;transition:transform .1s,border-color .12s,color .12s;}
         .stButton>button:hover{border-color:#5F8575;color:#21362B;background:#EEE9DC;}
         .stButton>button:active{transform:scale(.95);}
+        /* customize popover labels */
+        .cz-h{font-size:.64rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+            color:#8A9A8C;margin:10px 0 5px;}
 
         /* executive header bar */
         .xh{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,#21362B,#2C4A3B);
@@ -2986,25 +2996,42 @@ def _render_overview_tab(df, all_months, cur_month_start):
         except Exception:
             return None
 
-    # ---- advanced card customization: which metrics, order, size ----
+    # ---- customization: modern popover with toggle pills + segmented size ----
     if "ov_cards" not in st.session_state:
         st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
-    with st.expander("⚙️ Customize cards", expanded=False):
-        _cc1, _cc2, _cc3 = st.columns([3.6, 1.5, 0.9])
-        with _cc1:
-            st.multiselect("Metrics on cards", list(KPI_CATALOG.keys()), key="ov_cards",
-                           max_selections=8,
-                           help="Pick up to 8. Cards appear in the order you select them.")
-        with _cc2:
-            _size = st.select_slider("Card size", options=["S", "M", "L"],
-                                     value=st.session_state.get("ov_card_size", "M"), key="ov_card_size")
-        with _cc3:
-            st.write("")
-            st.write("")
-            if st.button("Reset", use_container_width=True, key="ov_cards_reset"):
-                st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
-                st.session_state["ov_card_size"] = "M"
-                st.rerun()
+    if "ov_card_size" not in st.session_state:
+        st.session_state["ov_card_size"] = "M"
+    _catalog = list(KPI_CATALOG.keys())
+
+    def _customize_body():
+        st.markdown('<p class="cz-h">Metrics on cards</p>', unsafe_allow_html=True)
+        _pills = getattr(st, "pills", None)
+        if callable(_pills):
+            st.pills("Metrics", _catalog, selection_mode="multi", key="ov_cards",
+                     label_visibility="collapsed")
+        else:
+            st.multiselect("Metrics", _catalog, key="ov_cards", label_visibility="collapsed")
+        st.markdown('<p class="cz-h">Card size</p>', unsafe_allow_html=True)
+        _seg = getattr(st, "segmented_control", None)
+        if callable(_seg):
+            st.segmented_control("Size", ["S", "M", "L"], key="ov_card_size",
+                                 label_visibility="collapsed")
+        else:
+            st.select_slider("Size", ["S", "M", "L"], key="ov_card_size", label_visibility="collapsed")
+        if st.button("↺ Reset to defaults", key="ov_cards_reset", use_container_width=True):
+            st.session_state["ov_cards"] = list(KPI_DEFAULT_CARDS)
+            st.session_state["ov_card_size"] = "M"
+            st.rerun()
+
+    _pop = getattr(st, "popover", None)
+    _cz1, _cz2 = st.columns([1.1, 6])
+    with _cz1:
+        if callable(_pop):
+            with _pop("⚙️ Customize", use_container_width=True):
+                _customize_body()
+        else:
+            with st.expander("⚙️ Customize cards", expanded=False):
+                _customize_body()
     chosen = st.session_state.get("ov_cards") or list(KPI_DEFAULT_CARDS)
     if not chosen:
         chosen = list(KPI_DEFAULT_CARDS)
