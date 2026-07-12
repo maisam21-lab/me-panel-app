@@ -2658,6 +2658,15 @@ def _inject_exec_css():
         /* customize popover labels */
         .cz-h{font-size:.64rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
             color:#8A9A8C;margin:10px 0 5px;}
+        /* RevOps signature footer */
+        .revops-sig{display:flex;align-items:center;gap:12px;margin:30px 0 6px;padding-top:16px;
+            border-top:1px solid #E0DCCE;}
+        .revops-sig .rs-mark{flex:0 0 auto;display:flex;}
+        .revops-sig .rs-txt{display:flex;flex-direction:column;line-height:1.25;}
+        .revops-sig .rs-txt b{font-family:var(--nm-serif);color:#21362B;font-size:.98rem;font-weight:700;letter-spacing:.02em;}
+        .revops-sig .rs-txt span{color:#A79E8B;font-size:.72rem;font-weight:600;}
+        .revops-sig .rs-conf{margin-left:auto;color:#A79E8B;font-size:.68rem;font-weight:800;
+            letter-spacing:.09em;text-transform:uppercase;}
 
         /* executive header bar */
         .xh{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,#21362B,#2C4A3B);
@@ -3081,6 +3090,25 @@ def _render_exec_header(df, all_months):
     )
 
 
+def _revops_signature():
+    """Branded RevOps sign-off footer."""
+    st.markdown(
+        '<div class="revops-sig">'
+        '<span class="rs-mark"><svg width="24" height="24" viewBox="0 0 48 48">'
+        '<circle cx="24" cy="24" r="5" fill="#D97757"/>'
+        '<circle cx="24" cy="24" r="17" fill="none" stroke="#21362B" stroke-width="1.6" opacity=".45"/>'
+        '<circle cx="24" cy="7"  r="2" fill="#21362B" opacity=".55"/>'
+        '<circle cx="41" cy="24" r="2" fill="#21362B" opacity=".55"/>'
+        '<circle cx="24" cy="41" r="2" fill="#21362B" opacity=".55"/>'
+        '<circle cx="7"  cy="24" r="2" fill="#21362B" opacity=".55"/></svg></span>'
+        '<div class="rs-txt"><b>NAMAA &middot; ME RevOps</b>'
+        '<span>Revenue Operations &mdash; Middle East</span></div>'
+        '<span class="rs-conf">Private &amp; Confidential</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_overview_tab(df, all_months, cur_month_start):
     """v2 Overview: 7 serif KPI cards (ME headline, hover MoM/YoY) + occupancy & churn by country."""
     _inject_exec_css()
@@ -3252,9 +3280,7 @@ def _render_overview_tab(df, all_months, cur_month_start):
     except Exception as _e:
         st.info(f"Map unavailable ({type(_e).__name__}).")
 
-    st.caption(f"Everything on this tab reflects **{asof_ts.strftime('%b %Y')}** (change it above). "
-               f"KPI delta is vs {yoy_lbl} (pp for rates, % for volumes). "
-               f"$ figures in thousands. Source: `{BRIDGE_TABLE}`.")
+    _revops_signature()
 
 
 def _render_revenue_tab(df, all_months, cur_month_start):
