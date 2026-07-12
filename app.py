@@ -2962,19 +2962,23 @@ def _render_clickable_matrix(df, months_closed, asof, *, key_prefix="ovm"):
     metrics×months for one market. Both feed the same drill-down card."""
     sec("Data Explorer", "Compare markets this month, or trend one market over time — click any number to drill in")
     view_opts = ["By market · this month", "By month · one market"]
+    _vkey = f"{key_prefix}_view"
+    if _vkey not in st.session_state:
+        st.session_state[_vkey] = view_opts[0]
     _seg = getattr(st, "segmented_control", None)
     _c1, _c2 = st.columns([2.6, 5])
     with _c1:
         if callable(_seg):
-            view = _seg("View", view_opts, default=view_opts[0],
-                        key=f"{key_prefix}_view", label_visibility="collapsed")
+            view = _seg("View", view_opts, key=_vkey, label_visibility="collapsed")
         else:
-            view = st.radio("View", view_opts, horizontal=True,
-                            key=f"{key_prefix}_view", label_visibility="collapsed")
-    if (view or view_opts[0]) == view_opts[0]:
-        _render_clickable_snapshot(df, asof, key_prefix=f"{key_prefix}_snap")
-    else:
-        _render_clickable_scorecard(df, months_closed, key_prefix=f"{key_prefix}_sc")
+            view = st.radio("View", view_opts, horizontal=True, key=_vkey, label_visibility="collapsed")
+    try:
+        if (view or view_opts[0]) == view_opts[0]:
+            _render_clickable_snapshot(df, asof, key_prefix=f"{key_prefix}_snap")
+        else:
+            _render_clickable_scorecard(df, months_closed, key_prefix=f"{key_prefix}_sc")
+    except Exception as _e:
+        st.error(f"Data Explorer failed to render this view: {type(_e).__name__}: {_e}")
 
 
 def _country_line(fig_col, df, months_closed, col, title, *, countries, alert=None,
