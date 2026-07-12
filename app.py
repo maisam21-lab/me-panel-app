@@ -3904,60 +3904,41 @@ def _build_drilldown_card_inner(df, market, mlabel, col, kind, up_good, win, idx
 
 
 def _maybe_render_overview_dd(df, months_closed):
-    """Mount (or clear) the floating, drag-anywhere drill-down card. The card is injected
-    into the PARENT document via a zero-height component so it floats over the whole page."""
-    import json
-    import streamlit.components.v1 as components
+    """Open the drill-down in a stable native dialog when a snapshot/scorecard cell was
+    clicked. (Reverted from the parent-DOM injection, which destabilized the app.)"""
     pay = st.session_state.get("_ov_dd")
-
     if not isinstance(pay, dict):
-        # No selection: make sure no stale card is left floating in the parent DOM.
-        components.html(
-            "<script>(function(){try{var d=window.parent.document;"
-            "var o=d.getElementById('nmdd');if(o)o.remove();"
-            "var c=d.getElementById('nmdd-css');if(c)c.remove();}catch(e){}})();</script>",
-            height=0,
-        )
         return
-
     month = pay.get("month")
     upto = [m for m in months_closed if pd.Timestamp(m) <= pd.Timestamp(month)] or list(months_closed)
     win = upto[-16:]
     if not win:
         return
     idx = len(win) - 1
-    sig = f'{pay["market"]}|{pay["label"]}|{pd.Timestamp(win[idx]).strftime("%Y-%m")}'
-    card_html = _build_drilldown_card_inner(df, pay["market"], pay["label"], pay["col"],
-                                            pay["kind"], pay["up_good"], win, idx)
 
-    _cA, _cB = st.columns([5, 1])
-    with _cB:
-        if st.button("✕ Close", key="ov_dd_close", use_container_width=True):
+    def _body():
+        _render_metric_drilldown_body(df, pay["market"], pay["label"], pay["col"],
+                                      pay["kind"], pay["up_good"], win, idx)
+
+    _dialog = getattr(st, "dialog", None)
+    if callable(_dialog):
+        def _dismiss():
             st.session_state.pop("_ov_dd", None)
-            st.session_state.pop("_sc_last_sig", None)
-            st.rerun()
+        try:
+            _dec = _dialog("Details", width="large", on_dismiss=_dismiss)
+        except TypeError:
+            _dec = _dialog("Details", width="large")
 
-    js = (
-        "<script>(function(){var d=window.parent.document;var SIG=" + json.dumps(sig) + ";try{"
-        "if(window.__nmddClosed===SIG){var o0=d.getElementById('nmdd');if(o0)o0.remove();"
-        "var c0=d.getElementById('nmdd-css');if(c0)c0.remove();return;}"
-        "var oc=d.getElementById('nmdd');if(oc)oc.remove();"
-        "var os=d.getElementById('nmdd-css');if(os)os.remove();"
-        "var s=d.createElement('style');s.id='nmdd-css';s.textContent=" + json.dumps(_DD_CARD_CSS_INNER) + ";d.head.appendChild(s);"
-        "var w=d.createElement('div');w.id='nmdd';w.innerHTML=" + json.dumps(card_html) + ";d.body.appendChild(w);"
-        "var card=d.getElementById('nmdd-card'),h=d.getElementById('nmdd-handle');"
-        "var sx,sy,ox,oy,drag=false;"
-        "function dn(e){var t=(e.touches?e.touches[0]:e);drag=true;sx=t.clientX;sy=t.clientY;"
-        "var r=card.getBoundingClientRect();ox=r.left;oy=r.top;card.style.right='auto';e.preventDefault();}"
-        "function mv(e){if(!drag)return;var t=(e.touches?e.touches[0]:e);"
-        "card.style.left=(ox+t.clientX-sx)+'px';card.style.top=Math.max(0,oy+t.clientY-sy)+'px';}"
-        "function up(){drag=false;}"
-        "h.addEventListener('mousedown',dn);d.addEventListener('mousemove',mv);d.addEventListener('mouseup',up);"
-        "h.addEventListener('touchstart',dn,{passive:false});d.addEventListener('touchmove',mv,{passive:false});d.addEventListener('touchend',up);"
-        "var cl=d.getElementById('nmdd-close');if(cl)cl.onclick=function(){window.__nmddClosed=SIG;w.remove();s.remove();};"
-        "}catch(e){}})();</script>"
-    )
-    components.html(js, height=0)
+        @_dec
+        def _dlg():
+            _body()
+        _dlg()
+    else:
+        with st.container(border=True):
+            _body()
+            if st.button("✕ Close", key="ov_dd_close_fallback"):
+                st.session_state.pop("_ov_dd", None)
+                st.rerun()
 
 
 # ---------------------------------------------------------------- main
